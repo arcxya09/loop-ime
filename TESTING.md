@@ -1,4 +1,16 @@
-# Loop 0.1.12-alpha.13 验证记录
+# Loop 验证记录
+
+## 0.1.15-alpha.16 自动更新验证
+
+本轮使用 Windows / JDK 21 / SDK 37.0 / Build Tools 37.0.0。完整主机回归 204 项通过，0 失败、0 跳过；8 项 Python 脚本测试通过。新增 21 项更新回归，覆盖版本码排序、正式/预发布通道、草稿与降级拒绝、清单和 APK 摘要、错误仓库 URL、网络失败/限流/大小上限、重定向目标和独立请求头、后台计划持久化、Wi-Fi 与移动网络策略、重复下载、失败重试、自动下载开关、完成广播过滤、签名/包名/版本/SDK 校验、覆盖安装后的旧包清理及文件共享边界。
+
+本机 Android 行为验证基于 Robolectric：DownloadManager、JobScheduler 和 PackageManager 使用主机替身；真实文件执行 SHA-256 校验。Windows 的 FileProvider 路径分隔符与 Android 不同，本机校验合并 Manifest 的共享根和拒绝私有文件，Linux CI 额外校验合法安装 URI。网络重定向测试使用 OkHttp 拦截器；另用与客户端相同的公开请求头，实际读取仓库已有 alpha.15 的发布清单，确认下载响应兼容。
+
+未将上述检查当作 Android 17 真机的后台调度、系统 DownloadManager 断点续传、通知授权、未知来源安装授权和安装器覆盖升级验收。设备验收应从本版发现更高 versionCode 的下一版开始，依次检查 Wi-Fi 下载、离线重试、强制停止/重启后的状态恢复、拒绝权限再授权、取消安装后重试，以及安装后词库、旧数据库和 Key 保留。后台自动更新不承诺精确到点执行。
+
+复现：`./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease`；脚本回归：`python3 -m unittest discover -s scripts -p 'test_*.py'`。发布工作流额外校验原签名、版本、APK 与 14 个原生库的 16 KB 对齐。当前 Release 的最终 CI 测试数与提交见附件 `release-manifest.json`。
+
+## 历史：Loop 0.1.12-alpha.13 验证记录
 
 GitHub 接入增加完整主机测试和发布验证流程，当前结果单独保存在 `verification/github-setup/`。该流程不等同于已经在用户仓库运行 GitHub Actions，远程状态需以实际仓库为准。
 

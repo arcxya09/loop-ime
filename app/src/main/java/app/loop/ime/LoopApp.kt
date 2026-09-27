@@ -18,6 +18,7 @@ class LoopApp : Application() {
         if (!getProcessName().endsWith(":asr") && unlocked(this)) {
             RotationLock(this).recover()
             DraftWriter.get(this).recover()
+            runCatching { AppUpdates.schedule(this);AppUpdates.refresh(this) }
         }
     }
     companion object {

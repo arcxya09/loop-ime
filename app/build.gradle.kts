@@ -14,8 +14,8 @@ android {
         applicationId = "app.loop.ime"
         minSdk = 37
         targetSdk = 37
-        versionCode = 15
-        versionName = "0.1.14-alpha.15"
+        versionCode = 16
+        versionName = "0.1.15-alpha.16"
         ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
         testInstrumentationRunner = providers.gradleProperty("loopTestRunner")
             .orElse("app.loop.ime.LoopInstrumentation").get()
@@ -33,6 +33,7 @@ android {
     }
 }
 dependencies {
+    implementation("androidx.core:core:1.18.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation(files("libs/sherpa-onnx-1.13.8.aar"))
     implementation("net.zetetic:sqlcipher-android:4.10.0@aar")
