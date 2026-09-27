@@ -13,6 +13,19 @@ import org.robolectric.annotation.SQLiteMode
 @Config(sdk=[37],application=Application::class)
 @SQLiteMode(SQLiteMode.Mode.NATIVE)
 class StoreRegressionTest {
+    @Test fun futureChoiceAndBackupTimesNeverBecomeFreshLearningOnImport()=StoreFixture().use { f ->
+        val future=System.currentTimeMillis()+365*CandidateRanking.DAY
+        f.store.applyDraft(DraftSnapshot("future","事实","choice",false,false,1,100,listOf(LearnedChoice("事实","shishi",false,1,future,contexts=mapOf("这是" to 1)))))
+        assertEquals(0L,f.store.rankedTerms("shishi","这是").single().lastUsed)
+        val rows=mutableListOf<JSONObject>();f.store.exportRows(rows::add)
+        rows.filter { it.getString("table")=="evidence" }.forEach { it.put("last_used",future) }
+        StoreFixture().use { other ->
+            other.store.importRows(rows.asSequence())
+            val term=other.store.rankedTerms("shishi","这是").single()
+            assertEquals(0L,term.lastUsed);assertEquals(0L,term.evidence.single().time)
+            assertEquals(2,term.score)
+        }
+    }
     @Test fun adaptiveContextsSurviveReopenBackupAndRetractWithSources()=StoreFixture().use { f ->
         val now=System.currentTimeMillis()
         fun save(id: String,word: String,context: String,count: Int)=f.store.applyDraft(DraftSnapshot(id,(context+word).repeat(count),"choice",false,true,1,now,

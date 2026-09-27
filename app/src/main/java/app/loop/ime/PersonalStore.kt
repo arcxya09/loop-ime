@@ -117,7 +117,7 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
         else trimEvidence(snapshot.id,snapshot.text)
         for(choice in snapshot.choices)if(snapshot.text.contains(choice.text)) {
             addTerm(choice.text,choice.pinyin,"choice",snapshot.id,choice.cloud)
-            val used=choice.lastUsed.coerceIn(0,System.currentTimeMillis()+60000)
+            val used=CandidateRanking.validTime(choice.lastUsed)
             val code=choice.inputCode.takeIf(CandidateRanking::validCode).orEmpty()
             db.execSQL("UPDATE evidence SET kind='choice',uses=?,last_used=max(last_used,?),input_code=CASE WHEN ?<>'' AND ?>=last_used THEN ? ELSE input_code END WHERE term=? AND origin=?",arrayOf<Any>(minOf(choice.count.coerceIn(1,100000),InputHistory.occurrences(snapshot.text,choice.text)),used,code,used,code,choice.text,snapshot.id))
             db.execSQL("UPDATE evidence SET contexts=? WHERE term=? AND origin=?",arrayOf<Any>(CandidateRanking.encodeContexts(choice.contexts,minOf(choice.count,InputHistory.occurrences(snapshot.text,choice.text))),choice.text,snapshot.id))
@@ -338,7 +338,7 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
             if(t=="evidence") {
                 values.put("cloud",if(j.getString("kind") in setOf("contacts","manual"))0 else j.optInt("cloud",0).coerceIn(0,1))
                 values.put("uses",j.optInt("uses",1).coerceIn(1,100000))
-                values.put("last_used",j.optLong("last_used",0).coerceIn(0,System.currentTimeMillis()+60000))
+                values.put("last_used",CandidateRanking.validTime(j.optLong("last_used",0)))
                 values.put("input_code",j.optString("input_code","").takeIf(CandidateRanking::validCode).orEmpty())
                 values.put("contexts",CandidateRanking.encodeContexts(CandidateRanking.decodeContexts(j.optString("contexts","{}"),values.getAsInteger("uses")),values.getAsInteger("uses")))
                 val origin=j.getString("origin")

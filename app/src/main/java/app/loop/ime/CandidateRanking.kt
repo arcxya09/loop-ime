@@ -28,6 +28,7 @@ object CandidateRanking {
     fun inputCode(raw: String,nine: Boolean)=(if(nine)"9:" else "26:")+raw.replace("'","")
     fun validCode(code: String)=Regex("(?:9:[2-9]{1,64}|26:[a-z]{1,64})").matches(code)
     fun exact(term: Term,raw: String,nine: Boolean)=term.inputCode==inputCode(raw,nine) || NineKey.matches(term.pinyin,raw,nine)
+    fun validTime(time: Long,now: Long=System.currentTimeMillis())=time.takeIf { it in 1..now+60000 } ?: 0L
     // Never cross punctuation/whitespace; do not split supplementary Han.
     fun context(text: String): String {
         val points=text.codePoints().toArray().takeLast(4).takeLastWhile { Character.isLetter(it) }
@@ -50,7 +51,7 @@ object CandidateRanking {
         cleanContexts(json.keys().asSequence().take(MAX_CONTEXTS).associateWith { json.optInt(it,0) },count)
     }.getOrDefault(emptyMap())
     fun decay(time: Long,now: Long,halfLife: Double): Double {
-        if(time<=0 || time>now+60000)return 0.0
+        if(validTime(time,now)==0L)return 0.0
         return exp(-ln(2.0)*(now-time).coerceAtLeast(0).toDouble()/halfLife)
     }
     fun scores(terms: List<Term>,context: String="",now: Long=System.currentTimeMillis()): List<Double> {
