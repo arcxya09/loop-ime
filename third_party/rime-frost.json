@@ -1,0 +1,35 @@
+{
+  "repository": "https://github.com/gaboolic/rime-frost",
+  "commit": "3ad2cb34e3c5763ba3f8da0a617fcaa221b355aa",
+  "license": "GPL-3.0",
+  "files": [
+    {
+      "path": "app/src/main/assets/rime/cn_dicts/8105.dict.yaml",
+      "upstream_path": "cn_dicts/8105.dict.yaml",
+      "sha256": "5a6bb545d07140406208728aeed70706e84279daeee132f10b069cd6387a042a",
+      "bytes": 99367,
+      "entries": 8529
+    },
+    {
+      "path": "app/src/main/assets/rime/cn_dicts/41448.dict.yaml",
+      "upstream_path": "cn_dicts/41448.dict.yaml",
+      "sha256": "b2115eae3aea58190424c22825f6aea12f781ae23ea82b62cd951c41f6d576d5",
+      "bytes": 452149,
+      "entries": 43326
+    },
+    {
+      "path": "app/src/main/assets/rime/cn_dicts/base.dict.yaml",
+      "upstream_path": "cn_dicts/base.dict.yaml",
+      "sha256": "db5825b653107eb349627d39ae74833208e06d52eb0231ce10c3bb59b94e4f86",
+      "bytes": 9937947,
+      "entries": 365756
+    },
+    {
+      "path": "app/src/main/assets/rime/cn_dicts/ext.dict.yaml",
+      "upstream_path": "cn_dicts/ext.dict.yaml",
+      "sha256": "44b78e4feb8a3b302298844061626aa4e2194901b8ed4ee6acec84261b6aa90d",
+      "bytes": 7711375,
+      "entries": 235580
+    }
+  ]
+}

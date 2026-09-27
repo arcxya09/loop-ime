@@ -35,6 +35,38 @@ class CandidatePanelTest {
         assertEquals(View.VISIBLE,k.findViewWithTag<View>("keyboard_notice").visibility)
         k.setPredictions(emptyList());assertEquals(before,words(strip))
     }
+    @Test fun backgroundAiFailuresNeverResizeOrMoveCandidatesAndKeys()=fixture { k,events ->
+        for(nine in listOf(true,false)) {
+            k.setNineKey(nine);k.composition(if(nine)"64426" else "nihao")
+            var chosen=false
+            k.setCandidates(listOf("你好" to { chosen=true },"你们" to {}));measure(k)
+            val strip=k.findViewWithTag<View>("candidate_strip")
+            val body=k.findViewWithTag<View>("keyboard_body")
+            val height=k.height;val top=body.top;val width=strip.width
+            val before=words(strip)
+            for(error in listOf("AI 候选超时，稍后重试","AI：连接失败","AI 暂无匹配候选")) {
+                k.aiStatus(error);measure(k)
+                assertEquals(height,k.height);assertEquals(top,body.top);assertEquals(width,strip.width)
+                assertEquals(before,words(strip));assertEquals(View.GONE,k.findViewWithTag<View>("keyboard_notice").visibility)
+                val tools=k.findViewWithTag<View>("tools")
+                assertTrue(tools.contentDescription.contains(error));assertTrue(tools.performLongClick())
+                assertEquals(error,org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
+            }
+            all(strip).filterIsInstance<TextView>().single { it.text=="你好" }.performClick();assertTrue(chosen)
+            k.findViewWithTag<View>("tools").performClick();assertEquals("tools",events.last())
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(9))
+            measure(k);assertEquals(height,k.height)
+            assertEquals("Loop 工具与设置",k.findViewWithTag<View>("tools").contentDescription)
+        }
+    }
+    @Test fun backgroundAiFailurePreservesAnActionableNotice()=fixture { k,_ ->
+        var undone=false
+        k.status("AI 已纠错 · 点击撤销") { undone=true };measure(k)
+        val height=k.height
+        k.aiStatus("AI：连接失败");measure(k)
+        assertEquals(height,k.height)
+        k.findViewWithTag<View>("keyboard_status").performClick();assertTrue(undone)
+    }
     @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun expandedWordsScrollAndLoadMoreWithoutGrowingTheKeyboard()=fixture { k,events ->
         val clicked=mutableListOf<Int>()

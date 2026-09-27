@@ -3,7 +3,7 @@ __include: luna_pinyin_simp.schema:/
 schema:
   schema_id: loop_t9
   name: Loop 简体九宫格
-  version: '1.0'
+  version: '2.0'
 speller:
   alphabet: '23456789'
   delimiter: " '"
@@ -11,7 +11,7 @@ speller:
     - abbrev/^([a-z]).+$/$1/
     - xlit/abcdefghijklmnopqrstuvwxyz/22233344455566677778889999/
 translator:
-  dictionary: luna_pinyin
+  dictionary: loop_frost
   prism: loop_t9
   enable_user_dict: false
   enable_sentence: true

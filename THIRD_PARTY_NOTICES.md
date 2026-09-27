@@ -6,6 +6,7 @@ Loop 自有代码以 GPL-3.0-or-later 提供。完整许可证见根目录 `LICE
 |---|---|---|
 | Trime 原生 Rime 库 | [osfans/trime v3.3.12](https://github.com/osfans/trime/tree/v3.3.12)，arm64-v8a / x86_64 release APK 内的 `librime_jni.so` | GPL-3.0-or-later；完整对应源码包随附 |
 | librime C API 头文件 | [rime/librime 1.17.0](https://github.com/rime/librime/tree/1.17.0) | BSD-3-Clause |
+| 白霜中文词库 | [gaboolic/rime-frost 固定提交 3ad2cb3](https://github.com/gaboolic/rime-frost/tree/3ad2cb34e3c5763ba3f8da0a617fcaa221b355aa)；原样收录 8105、41448、base、ext 四张表 | 上游 GPL-3.0；完整 LICENSE 内置于 `assets/licenses/rime-frost-GPL-3.0.txt`，每张表原始作者、数据来源说明均保留；摘要及条数见 `third_party/rime-frost.json` |
 | 朙月拼音、Prelude、Essay、Stroke | Trime v3.3.12 固定的 Rime 数据子模块；提交编号见 `third_party/trime-submodules.txt` | 原仓库 LGPL-3.0 声明，保留于源码归档 |
 | OpenCC、Lua、LevelDB、Marisa、yaml-cpp、Snappy、glog 等 | Trime v3.3.12 的固定源码子模块，见归档内各 `LICENSE` 和 `COPYING` | 各自的 Apache、BSD、MIT 等许可 |
 | Boost | 1.89.0，Trime 原生构建依赖 | Boost Software License 1.0 |
