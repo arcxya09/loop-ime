@@ -9,13 +9,17 @@ android {
         storePassword = "android"
         keyAlias = "androiddebugkey"
         keyPassword = "android"
+        // Keep the same certificate across modern verification and legacy installer inspection.
+        enableV1Signing = true
+        enableV2Signing = true
+        enableV3Signing = true
     }
     defaultConfig {
         applicationId = "app.loop.ime"
         minSdk = 37
         targetSdk = 37
-        versionCode = 16
-        versionName = "0.1.15-alpha.16"
+        versionCode = 17
+        versionName = "0.1.16-alpha.17"
         ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
         testInstrumentationRunner = providers.gradleProperty("loopTestRunner")
             .orElse("app.loop.ime.LoopInstrumentation").get()
