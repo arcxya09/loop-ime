@@ -28,6 +28,41 @@ import java.util.concurrent.TimeUnit
 @Config(sdk=[37],application=Application::class)
 @LooperMode(LooperMode.Mode.PAUSED)
 class NineKeyImeTest {
+    @Test fun partialRimeCommitsDoNotBindTheWholeInputCodeToTheFirstWord()=Fixture().use { f ->
+        ReflectionHelpers.setField(f.service,"history",InputHistory {})
+        ReflectionHelpers.setField(f.service,"restricted",false);Prefs(f.service).set("learning",true)
+        f.type();f.remainingAfterChoice="426"
+        val revision=ReflectionHelpers.getField<Long>(f.service,"candidateRevision")
+        f.press("cand:0:$revision");f.drain()
+        assertEquals("",ReflectionHelpers.getField<InputHistory>(f.service,"history").recentChoices().single().inputCode)
+        ReflectionHelpers.setField(f.service,"restricted",true)
+    }
+    @Test fun choosingAWordImmediatelyPromotesItAndSpaceAndEnterUseTheDisplayedFirstWord()=Fixture().use { f ->
+        val writes=mutableListOf<DraftSnapshot>();ReflectionHelpers.setField(f.service,"history",InputHistory(writes::add))
+        ReflectionHelpers.setField(f.service,"restricted",false);Prefs(f.service).set("learning",true)
+        f.type()
+        val revision=ReflectionHelpers.getField<Long>(f.service,"candidateRevision")
+        f.press("cand:1:$revision");f.drain();assertEquals("你好",f.text.toString())
+        // No database write has run: the in-memory learning state must already determine rank.
+        ReflectionHelpers.setField(f.service,"personal",emptyList<Term>())
+        f.type()
+        fun words()=all(f.keyboard.findViewWithTag("candidate_strip")).filterIsInstance<TextView>().map { it.text.toString() }.filter { it in setOf("你","你好") }
+        assertEquals("你好",words().first());f.press("space");f.drain();assertEquals("你好你好",f.text.toString())
+        f.type();assertEquals("你好",words().first());f.press("enter");f.drain();assertEquals("你好你好你好",f.text.toString())
+        assertEquals(3,writes.last().choices.single().count)
+        ReflectionHelpers.setField(f.service,"restricted",true)
+    }
+    @Test fun learningDisabledPrivateAndRejectedCommitsNeverBoostCandidates()=Fixture().use { f ->
+        val writes=mutableListOf<DraftSnapshot>();ReflectionHelpers.setField(f.service,"history",InputHistory(writes::add))
+        val prefs=Prefs(f.service)
+        for(mode in 0..3) {
+            prefs.set("learning",mode!=0);prefs.set("private",mode==1);ReflectionHelpers.setField(f.service,"restricted",mode==2);f.acceptCommit=mode!=3
+            f.type();val revision=ReflectionHelpers.getField<Long>(f.service,"candidateRevision")
+            f.press("cand:1:$revision");f.drain()
+            assertTrue(ReflectionHelpers.getField<InputHistory>(f.service,"history").recentChoices().isEmpty())
+        }
+        ReflectionHelpers.setField(f.service,"restricted",true)
+    }
     @Test fun suggestionModeDoesNotRewriteAndOffModeSuppressesCorrectionCandidates()=Fixture().use { f ->
         val prefs=Prefs(f.service);prefs.set("cloud",true);prefs.correctionMode=CorrectionMode.SUGGEST
         ReflectionHelpers.setField(f.service,"restricted",false)
@@ -107,6 +142,7 @@ class NineKeyImeTest {
         val keyboard=KeyboardView(service,::press)
         private var raw=""
         var candidateCount=2
+        var remainingAfterChoice=""
         private var candidateLimit=30
         private fun localWords()=if(candidateCount==2)listOf("你","你好") else (0 until candidateCount).map { "候选词$it" }
         val engine=RimeEngine(service) { key,kind ->
@@ -114,7 +150,7 @@ class NineKeyImeTest {
             if(kind!=5)candidateLimit=30
             when(kind) {
                 2 -> raw=""
-                1,3 -> { commit=localWords()[key];raw="" }
+                1,3 -> { commit=localWords()[key];raw=remainingAfterChoice }
                 5 -> candidateLimit+=60
                 else -> if(key==0xff08)raw=raw.dropLast(1) else raw+=key.toChar()
             }

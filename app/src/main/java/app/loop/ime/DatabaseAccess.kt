@@ -168,7 +168,7 @@ internal class DatabaseAccess(private val c: Context,private val vault: Vault=Va
         }
     }
     private fun validateLoop(db: SupportSQLiteDatabase) {
-        require(db.version in 1..3) { "旧库版本无法识别，原文件保留" }
+        require(db.version in 1..PersonalStore.SCHEMA_VERSION) { "旧库版本无法识别，原文件保留" }
         val tables=mutableSetOf<String>()
         db.query("SELECT name FROM sqlite_master WHERE type='table'").use { while(it.moveToNext())tables+=it.getString(0) }
         require(tables.containsAll(listOf("memories","terms","evidence","forgotten","clips"))) { "不是完整的 Loop 数据库，原文件保留" }
