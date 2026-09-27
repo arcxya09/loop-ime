@@ -188,6 +188,9 @@ class KeyboardInteractionTest {
         k.setCandidates(emptyList());measure(k);preview(k,"keyboard-alpha8-idle")
         k.setMode(false);k.status("英文 · 长按空格说话");measure(k);preview(k,"keyboard-alpha8-english")
         k.setMode(true);k.voice(true);k.status("正在听 · 百炼云端");measure(k);preview(k,"keyboard-alpha8-voice")
+        val voiceHeight=k.height
+        k.voice(false);k.status("语音已结束");k.setCandidates(listOf("你好" to {}));k.setPredictions(listOf("世界" to {}));measure(k)
+        assertEquals(voiceHeight,k.height);preview(k,"keyboard-alpha20-voice-finished")
     }
     @Test fun voiceKeepsTheSameSpaceAndKeyboardHeightForToolbarAndHold()=withKeyboard { k,events ->
         val space=all(k).filterIsInstance<HoldSpaceKey>().single();val height=k.height
@@ -219,10 +222,10 @@ class KeyboardInteractionTest {
             k.offsetDescendantRectToMyCoords(enter,rect);assertEquals(k.height-k.paddingBottom,rect.bottom)
             assertNull(all(k).find { it.tag=="switch_ime" })
             preview(k,"keyboard-alpha8-${preset.value}")
-            k.setMode(false);measure(k);assertEquals(((preset.padDp+54)*density).toInt(),k.height)
-            k.setMode(false,true);measure(k);assertEquals(((preset.padDp+54)*density).toInt(),k.height)
+            k.setMode(false);measure(k);assertEquals(((preset.padDp+58)*density).toInt(),k.height)
+            k.setMode(false,true);measure(k);assertEquals(((preset.padDp+58)*density).toInt(),k.height)
             k.panel("高度",listOf("高" to {},"中" to {},"低" to {}));measure(k)
-            assertEquals(((preset.padDp+54)*density).toInt(),k.height)
+            assertEquals(((preset.padDp+58)*density).toInt(),k.height)
         }
         prefs.keyboardHeight=KeyboardHeight.HIGH;k.setHeightPreset(prefs.keyboardHeight);k.setMode(true);measure(k)
         assertEquals(oldHeight,k.height)
