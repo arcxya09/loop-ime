@@ -28,6 +28,41 @@ import java.util.concurrent.TimeUnit
 @Config(sdk=[37],application=Application::class)
 @LooperMode(LooperMode.Mode.PAUSED)
 class NineKeyImeTest {
+    @Test fun clearGestureDiscardsPinyinDeletesOnlyPrefixAndUndoRestoresIt()=Fixture().use { f ->
+        f.press("前文尾部");f.drain();Selection.setSelection(f.text,2);f.editor.selection(2,2,-1,-1)
+        f.type();f.press("delete_to_start");f.drain()
+        assertEquals("尾部",f.text.toString());assertEquals("",ReflectionHelpers.getField<RimeState>(f.service,"state").raw)
+        f.press("undo_edit");f.drain();assertEquals("前文尾部",f.text.toString())
+    }
+    @Test fun nextWordCanBeRequestedAndSelectedButNeverReusesAStaleOrPrivateResult()=Fixture().use { f ->
+        val prefs=Prefs(f.service);prefs.set("cloud",true);prefs.set("predict",true);prefs.correctionMode=CorrectionMode.OFF
+        ReflectionHelpers.setField(f.service,"history",InputHistory {});ReflectionHelpers.setField(f.service,"restricted",false)
+        val requests=mutableListOf<Pair<String,(Result<AiResult>)->Unit>>()
+        f.service.completeText={ text,_,cb -> requests+=text to cb;AiCall() }
+        f.press("今天天气");f.drain();f.press("predict_next");f.drain();shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("今天天气",requests.last().first)
+        requests.last().second(Result.success(AiResult("错误修改",listOf("今天天气很好","天气","晴朗"))))
+        assertEquals("今天天气",f.text.toString())
+        val word=all(f.keyboard).filterIsInstance<TextView>().first { it.text=="很好" }
+        word.performClick();f.drain();assertEquals("今天天气很好",f.text.toString())
+        word.performClick();f.drain();assertEquals("今天天气很好",f.text.toString())
+        f.press("predict_next");f.drain();shadowOf(Looper.getMainLooper()).idle();val last=requests.last().second
+        ReflectionHelpers.setField(f.service,"cloudBlocked",true)
+        last(Result.success(AiResult("泄露",listOf("不应显示"))))
+        assertFalse(all(f.keyboard).filterIsInstance<TextView>().any { it.text=="不应显示" })
+        val count=requests.size;f.press("predict_next");f.drain();assertEquals(count,requests.size)
+        ReflectionHelpers.setField(f.service,"restricted",true)
+    }
+    @Test fun clipboardAutoSplitInsertionIsLocalAndDoesNotSaveOrSendThePieces()=Fixture().use { f ->
+        ReflectionHelpers.setField(f.service,"restricted",false)
+        val writes=mutableListOf<DraftSnapshot>();ReflectionHelpers.setField(f.service,"history",InputHistory(writes::add))
+        f.service.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("test","甲乙甲"))
+        f.press("clipboard");f.drain()
+        f.keyboard.findViewWithTag<View>("split:1").performClick();f.keyboard.findViewWithTag<View>("split:2").performClick()
+        f.keyboard.findViewWithTag<View>("split_insert").performClick();f.drain()
+        assertEquals("乙甲",f.text.toString());assertTrue(writes.isEmpty());assertTrue(ReflectionHelpers.getField(f.service,"cloudBlocked"))
+        ReflectionHelpers.setField(f.service,"restricted",true)
+    }
     @Test fun toolsAndSubpanelsPreserveUncommittedPinyinAndReturnCandidates()=Fixture().use { f ->
         f.type()
         for(panel in listOf("tools","height","layouts","emoji","edit")) {
@@ -153,7 +188,7 @@ class NineKeyImeTest {
         ReflectionHelpers.setField(f.service,"restricted",false)
         f.service.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("test","当前剪贴板"))
         f.press("clipboard");f.drain()
-        all(f.keyboard).filterIsInstance<TextView>().single { it.text=="插入" }.performClick()
+        all(f.keyboard).filterIsInstance<TextView>().single { it.text=="插入原文" }.performClick()
         assertEquals("当前剪贴板",f.text.toString());assertTrue(ReflectionHelpers.getField(f.service,"cloudBlocked"))
         ReflectionHelpers.setField(f.service,"restricted",true)
     }

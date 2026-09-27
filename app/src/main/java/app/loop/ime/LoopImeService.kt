@@ -195,7 +195,19 @@ class LoopImeService : InputMethodService() {
         }
         if(key=="privacy") { if(LoopApp.unlocked(this)) { stopForNavigation();prefs.set("private",!prefs.privateMode);quickClips.clear();OtpInbox.clear();refreshTerms();showPanel("tools") };done();return }
         if(voice) { done();return }
-        if(key in setOf("clipboard","memory","emoji","punctuation","tools","height","layouts","edit","hand","phrases","quick")) { showPanel(key);done();return }
+        if(key in setOf("clipboard","clipboard_records","memory","emoji","punctuation","tools","height","layouts","edit","hand","phrases","quick")) { showPanel(key);done();return }
+        if(key=="predict_next") {
+            val predict={
+                activePanel="";keyboard.closePanel();cancelAi();renderCandidates()
+                when {
+                    restricted || cloudBlocked || prefs.privateMode -> keyboard.status("当前内容仅本地处理，不调用 AI")
+                    !prefs.cloud || !prefs.flag("predict",true) -> keyboard.status("请先启用云端 AI 和下一词预测") { enqueue("ai_settings") }
+                    latestText.isBlank() -> keyboard.status("先输入一些文字，再预测下一词")
+                    else -> { keyboard.aiStatus("正在预测下一词…");LoopApp.main.post(aiTask) }
+                };done()
+            }
+            if(state.raw.isNotEmpty())commitRime(predict) else predict();return
+        }
         if(key.startsWith("quick:")) { val insert={ insertQuick(key.substringAfter(':'));done() };if(state.raw.isNotEmpty())commitRime(insert) else insert();return }
         if(key=="quick_dismiss") { quickClips.values().forEach { quickClips.consume(it.id) };OtpInbox.buffer.values().forEach { OtpInbox.buffer.consume(it.id) };renderCandidates();done();return }
         if(key.startsWith("hand:")) { val value=key.substringAfter(':');prefs.set("one_hand",value);keyboard.setHand(value);showPanel("hand");done();return }
@@ -283,6 +295,15 @@ class LoopImeService : InputMethodService() {
                 renderCandidates();done()
             } else done()
             return
+        }
+        if(key=="delete_to_start") {
+            cancelAi();undo=null;val hadComposition=state.raw.isNotEmpty()
+            rime.clear();state=RimeState();candidateRevision++;editor.cancelComposition()
+            if(editor.deleteToStart()) {
+                recordEdit("delete_to_start")
+                keyboard.status(if(editor.canUndo)"已清空光标前文字 · 点击撤销" else "已清空光标前文字",if(editor.canUndo)({ enqueue("undo_edit") }) else null)
+            } else keyboard.status(if(hadComposition)"已清除拼音" else "未清空：请将光标放在可编辑文字后，并取消选区")
+            latestText="";recentWrites.clear();refreshTerms();renderCandidates();done();return
         }
         if(key=="delete") {
             cancelAi();undo=null
@@ -466,15 +487,15 @@ class LoopImeService : InputMethodService() {
     private val aiTask=Runnable { requestAi() }
     private fun cancelAi() { aiVersion++;call?.cancel();call=null;LoopApp.main.removeCallbacks(aiTask);suggestions=emptyList();correctionSuggestion=null;if(::nineAi.isInitialized)nineAi.cancel() }
     private fun scheduleAi() {
-        if(restricted || cloudBlocked || !prefs.cloud || latestText.isBlank() || (prefs.correctionMode==CorrectionMode.OFF && !prefs.flag("predict",true)))return
+        if(!visible || restricted || cloudBlocked || !prefs.cloud || latestText.isBlank() || (prefs.correctionMode==CorrectionMode.OFF && !prefs.flag("predict",true)))return
         LoopApp.main.removeCallbacks(aiTask);LoopApp.main.postDelayed(aiTask,650)
     }
     private fun requestAi() {
-        if(!visible || voice || busy || symbolsMode || state.raw.isNotEmpty() || editor.owner.isNotEmpty() || restricted || cloudBlocked || !prefs.cloud)return
+        if(!visible || voice || busy || symbolsMode || state.raw.isNotEmpty() || editor.owner.isNotEmpty() || restricted || cloudBlocked || !prefs.cloud || latestText.isBlank())return
         val text=latestText;val revision=editor.revision;val generation=editor.generation;val version=++aiVersion
         val started=SystemClock.uptimeMillis()
         call=completeText(text,personal.filter { it.cloud }.map { it.text }) { result ->
-            if(!visible || symbolsMode || !prefs.cloud || version!=aiVersion || revision!=editor.revision || generation!=editor.generation || state.raw.isNotEmpty())return@completeText
+            if(!visible || voice || restricted || cloudBlocked || symbolsMode || !prefs.cloud || version!=aiVersion || revision!=editor.revision || generation!=editor.generation || state.raw.isNotEmpty())return@completeText
             result.onSuccess { answer ->
                 val now=SystemClock.uptimeMillis()
                 val editable=recentWrites.filter { now-it.second<=3000 }.sumOf { it.first }.coerceAtMost(40)
@@ -484,7 +505,8 @@ class LoopImeService : InputMethodService() {
                         undo=Triple(text,answer.corrected,editor.revision);updateRecordedCorrection(text,answer.corrected);latestText=answer.corrected;recentWrites.clear();keyboard.status("AI 已纠错 · 点击撤销",::applyUndo)
                     } else correctionSuggestion=answer.corrected
                 } else if(prefs.correctionMode!=CorrectionMode.OFF && answer.corrected!=text && answer.corrected.length in 1..200)correctionSuggestion=answer.corrected
-                if(prefs.flag("predict",true))suggestions=PredictionText.continuations(latestText,answer.predictions)
+                if(prefs.flag("predict",true))suggestions=PredictionText.continuations(latestText,answer.predictions).filter { it.trim().length<=20 }
+                keyboard.aiStatus(if(suggestions.isEmpty() && prefs.flag("predict",true))"暂无合适的下一词预测" else "")
                 renderCandidates()
             }.onFailure { keyboard.aiStatus("AI："+AiProtocol.failure(it).take(80)) }
         }
@@ -599,7 +621,7 @@ class LoopImeService : InputMethodService() {
         voiceQueue.forEach { it.call?.cancel() };voiceQueue.clear();partial=""
         if(voice && editor.owner=="voice")editor.cancelComposition()
         voice=false;stoppingVoice=false;cancelAi();if(::nineAi.isInitialized)nineAi.cancel(clearCache=true);if(::prefs.isInitialized)flushDraft()
-        if(::keyboard.isInitialized) { keyboard.dismissPreview();keyboard.cancelSpaceGesture();keyboard.voice(false) }
+        if(::keyboard.isInitialized) { keyboard.dismissPreview();keyboard.cancelSpaceGesture();keyboard.cancelDeleteGesture();keyboard.voice(false) }
     }
     private fun availableQuick(): List<QuickSuggestion> {
         if(!::prefs.isInitialized || restricted || prefs.privateMode || !visible)return emptyList()
@@ -649,7 +671,7 @@ class LoopImeService : InputMethodService() {
             "height" -> keyboard.actionPanel("键盘高度",KeyboardHeight.entries.map { act(it.label+if(unlocked && prefs.keyboardHeight==it)" · 当前" else "","height:${it.value}",unlocked,unlocked && prefs.keyboardHeight==it) })
             "layouts" -> keyboard.actionPanel("键盘与快捷入口",listOf(act("九宫格","layout:nine",unlocked,nineKey),act("26 键","layout:full",unlocked,!nineKey),act("单手模式","hand"),act("常用短语","phrases"),act("快捷建议","quick"),act("工具排序 / 手势","keyboard_settings")))
             "hand" -> keyboard.actionPanel("单手模式",listOf("left" to "靠左","off" to "完整宽度","right" to "靠右").map { (value,label) -> act(label,"hand:$value",unlocked,unlocked && prefs.text("one_hand","off")==value) })
-            "edit" -> keyboard.actionPanel("文本编辑",listOf(act("← 光标","left"),act("光标 →","right"),act("全选","select_all"),act("复制","copy",!private),act("剪切","cut",!private),act("粘贴","paste",!private),act("撤销输入","undo_edit",editor.canUndo),act("撤销 AI","undo",undo!=null),act("常用短语","phrases",!private)))
+            "edit" -> keyboard.actionPanel("文本编辑",listOf(act("← 光标","left"),act("光标 →","right"),act("全选","select_all"),act("复制","copy",!private),act("剪切","cut",!private),act("粘贴","paste",!private),act("撤销输入","undo_edit",editor.canUndo),act("撤销 AI","undo",undo!=null),act("常用短语","phrases",!private),act("AI 预测下一词","predict_next",!private)))
             "emoji","punctuation" -> { val marks=if(kind=="emoji")listOf("😀","😄","😊","😂","🥰","👍","🙌","🎉","❤️","✨","🌿","🙏","，","。","？","！","、","：","；","……","“","”") else listOf("，","。","？","！","、","：","；","……","“","”","（","）","《","》","—","·")
                 keyboard.actionPanel(if(kind=="emoji")"表情与符号" else "常用标点",marks.map { act(it,"symbol:$it") },6) }
             "quick" -> { captureClip();val epoch=fieldEpoch;val items=availableQuick();shownQuickIds=items.map { it.id }
@@ -659,15 +681,18 @@ class LoopImeService : InputMethodService() {
                 val epoch=fieldEpoch;val revision=panelRevision
                 fun active()=epoch==fieldEpoch && revision==panelRevision && visible && activePanel==kind && !restricted && !prefs.privateMode
                 fun insert(value: String) { if(!active())return;val finish={ if(insertLocal(value)) { activePanel="";keyboard.closePanel();renderCandidates() } };if(state.raw.isNotEmpty())commitRime(finish) else finish() }
-                val title=when(kind) { "phrases"->"常用短语";"clipboard"->"剪贴板";else->"输入记忆" }
-                val current=if(kind=="clipboard")captureClip() else null
-                keyboard.cards(title,listOfNotNull(current?.let { PanelCard("当前剪贴板",it,{ insert(it) }) }),"正在读取…")
-                var cards=listOfNotNull(current?.let { PanelCard("当前剪贴板",it,{ insert(it) }) })
+                val title=when(kind) { "phrases"->"常用短语";"clipboard","clipboard_records"->"剪贴板";else->"输入记忆" }
+                val current=if(kind in setOf("clipboard","clipboard_records"))captureClip() else null
+                fun split(value: String) { if(active())keyboard.clipboardParts(value,::insert) }
+                fun currentCard(value: String)=PanelCard("当前剪贴板",value,{ insert(value) },listOf("拆字" to { split(value) }))
+                if(kind=="clipboard" && current!=null) { split(current);return }
+                keyboard.cards(title,listOfNotNull(current?.let { currentCard(it) }),"正在读取…")
+                var cards=listOfNotNull(current?.let { currentCard(it) })
                 LoopApp.background(this,{
                     val store=PersonalStore.get(this)
                     cards=when(kind) {
                         "phrases" -> store.phrases().map { phrase -> PanelCard(phrase.group,phrase.text,{ insert(phrase.text) }) }
-                        "clipboard" -> (listOfNotNull(current?.let { PanelCard("当前剪贴板",it,{ insert(it) }) })+if(prefs.flag("clipboard"))store.clips().filterNot { QuickText.sensitive(it.text) }.map { clip -> PanelCard(if(clip.pinned)"已置顶" else "历史记录",clip.text,{ insert(clip.text) },listOf((if(clip.pinned)"取消置顶" else "置顶") to { if(active())LoopApp.background(this,{ store.clipAction(clip.id,!clip.pinned) }) { if(active())showPanel(kind) } },"删除" to { if(active())LoopApp.background(this,{ store.clipAction(clip.id,null) }) { if(active())showPanel(kind) } })) } else emptyList()).distinctBy { it.text }
+                        "clipboard","clipboard_records" -> (listOfNotNull(current?.let { currentCard(it) })+if(prefs.flag("clipboard"))store.clips().filterNot { QuickText.sensitive(it.text) }.map { clip -> PanelCard(if(clip.pinned)"已置顶" else "历史记录",clip.text,{ insert(clip.text) },listOf("拆字" to { split(clip.text) },(if(clip.pinned)"取消置顶" else "置顶") to { if(active())LoopApp.background(this,{ store.clipAction(clip.id,!clip.pinned) }) { if(active())showPanel(kind) } },"删除" to { if(active())LoopApp.background(this,{ store.clipAction(clip.id,null) }) { if(active())showPanel(kind) } })) } else emptyList()).distinctBy { it.text }
                         else -> store.memories(limit=30).filterNot { QuickText.sensitive(it.text) }.map { PanelCard("最近记忆",it.text,{ insert(it.text) }) }
                     }
                 }) { error -> if(active())keyboard.cards(title,cards,if(error==null)"暂无内容" else "读取失败，请在数据维护中检查；原数据保留",extra=if(kind=="phrases")listOf(act("添加 / 管理短语","phrase_settings")) else emptyList()) }

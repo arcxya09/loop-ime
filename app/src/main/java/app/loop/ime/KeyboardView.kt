@@ -65,6 +65,9 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     fun dismissPreview() { previewDialog?.dismiss();previewDialog=null }
     private var gestureEnabled=true
     private val content=FrameLayout(c)
+    private val deleteHint=TextView(c)
+    private var deleteGesture: DeleteGesture?=null
+    fun cancelDeleteGesture() { deleteGesture?.cancel() }
     private val expandedWords=CandidateFlowLayout(c)
     private val expandedScroll=object: ScrollView(c) {
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -157,6 +160,8 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             if(expanded && y>0 && expandedWords.height-y-expandedScroll.height<dp(60))requestMore()
         }
         addView(content,LayoutParams(-1,dp(heightPreset.padDp+4)))
+        deleteHint.apply { tag="delete_hint";textSize=14f;setTextColor(ink);background=bg(mint);setPadding(dp(14),dp(10),dp(14),dp(10));visibility=GONE;importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_YES;accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        content.addView(deleteHint,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.END).apply { topMargin=dp(8);rightMargin=dp(8) })
         render();voice(false)
         setOnApplyWindowInsetsListener { _,insets ->
             // Android draws the switcher. This is only its safe area, with no app footer or globe.
@@ -209,14 +214,13 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             if(showNotice)menu.add(statusText).setOnMenuItemClickListener { showStatus();true }
             if(aiMessage.isNotEmpty())menu.add(aiMessage).setOnMenuItemClickListener { Toast.makeText(context,aiMessage,Toast.LENGTH_LONG).show();true }
             menu.add("Loop 工具").setOnMenuItemClickListener { key("tools");true }
+            menu.add("AI 预测下一词").setOnMenuItemClickListener { key("predict_next");true }
             menu.add("收起键盘").setOnMenuItemClickListener { key("hide");true }
             show()
         }
     }
-    private fun deleteKey(): View=icon("delete","删除") { press("delete") }.apply {
-        val repeat=object: Runnable { override fun run() { key("delete");postDelayed(this,65) } }
-        setOnTouchListener { _,e -> when(e.actionMasked) { MotionEvent.ACTION_DOWN->postDelayed(repeat,380);MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->removeCallbacks(repeat) };false }
-        addOnAttachStateChangeListener(object: OnAttachStateChangeListener { override fun onViewAttachedToWindow(v: View) {};override fun onViewDetachedFromWindow(v: View) { removeCallbacks(repeat) } })
+    private fun deleteKey(): View=icon("delete","删除，长按连续删除，上滑清空") { press("delete") }.apply {
+        deleteGesture=DeleteGesture(this,{ press(it) }) { message -> deleteHint.text=message;deleteHint.visibility=if(message==null)GONE else VISIBLE;deleteHint.bringToFront() }
     }
     private fun space(): HoldSpaceKey=HoldSpaceKey(context,
         { active -> key(if(active)"voice_hold_start" else "voice_hold_end") },
@@ -464,7 +468,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         dismissPreview()
         cancelSpaceGesture();spaceKey=null;setExpanded(false);panelOpen=true;body.removeAllViews();applyHand()
         content.layoutParams=LayoutParams(-1,dp(heightPreset.padDp+4));panelHeader.removeAllViews()
-        panelHeader.addView(button("‹",26,Color.TRANSPARENT) { key(back) }.apply { contentDescription=if(back=="panel_close")"返回键盘" else "返回工具面板" },LayoutParams(dp(48),-1))
+        panelHeader.addView(button("‹",26,Color.TRANSPARENT) { key(back) }.apply { contentDescription=when(back) { "panel_close"->"返回键盘";"clipboard_records"->"返回剪贴板记录";else->"返回工具面板" } },LayoutParams(dp(48),-1))
         panelHeader.addView(TextView(context).apply { text=title;textSize=14f;setTextColor(ink);gravity=Gravity.CENTER_VERTICAL;setSingleLine();ellipsize=TextUtils.TruncateAt.END },LayoutParams(0,-1,1f))
         if(back!="panel_close")panelHeader.addView(button("⌨",20,Color.TRANSPARENT) { key("panel_close") }.apply { contentDescription="返回键盘" },LayoutParams(dp(48),-1))
         else panelHeader.addView(icon("settings","全部设置",Color.TRANSPARENT) { key("settings") },LayoutParams(dp(48),-1))
@@ -529,6 +533,31 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             box.addView(actions);list.addView(box,LayoutParams(-1,-2).apply { bottomMargin=dp(6) })
         }
         body.addView(ScrollView(context).apply { addView(list) },LayoutParams(-1,-1))
+    }
+    fun clipboardParts(text: String,insert: (String)->Unit) {
+        fun show(characters: Boolean) {
+            beginPanel("剪贴板 · 自动拆字","clipboard_records")
+            val split=ClipboardParts.split(text,characters);val selected=linkedSetOf<Int>()
+            val controls=LinearLayout(context)
+            controls.addView(button(if(characters)"切换分词" else "切换逐字",13) { show(!characters) },LayoutParams(0,dp(44),1f))
+            val clear=button("清除选择",13) {};controls.addView(clear,LayoutParams(0,dp(44),1f));body.addView(controls)
+            val preview=TextView(context).apply { tag="split_preview";this.text="点选片段后组合插入";setTextColor(ink);maxLines=2;textSize=14f }
+            body.addView(preview,LayoutParams(-1,dp(44)))
+            val flow=CandidateFlowLayout(context);val chips=mutableListOf<TextView>()
+            val paste=button("插入所选",14) { if(selected.isNotEmpty())insert(selected.sorted().joinToString("") { split.values[it] }) }.apply { tag="split_insert";isEnabled=false }
+            fun refresh() { preview.text=if(selected.isEmpty())"点选片段后组合插入" else selected.sorted().joinToString("") { split.values[it] };paste.isEnabled=selected.isNotEmpty();chips.forEachIndexed { i,v -> v.isSelected=i in selected;v.background=keyBg(if(v.isSelected)mint else keySurface) } }
+            split.values.forEachIndexed { i,value ->
+                val chip=button(ClipboardParts.label(value),16) { if(!selected.add(i))selected.remove(i);refresh() }.apply { tag="split:$i";contentDescription="选择片段：${ClipboardParts.label(value)}";setPadding(dp(10),0,dp(10),0) }
+                chips+=chip;flow.addView(chip,ViewGroup.MarginLayoutParams(-2,dp(44)).apply { setMargins(dp(2),dp(2),dp(2),dp(2)) })
+            }
+            clear.setOnClickListener { selected.clear();refresh() }
+            body.addView(ScrollView(context).apply { addView(flow) },LayoutParams(-1,0,1f))
+            if(split.truncated)body.addView(TextView(context).apply { this.text="仅展示前 ${ClipboardParts.LIMIT} 个片段，完整原文保留在记录页";setTextColor(muted);textSize=11f })
+            val footer=LinearLayout(context)
+            footer.addView(button("插入原文",14) { insert(text) },LayoutParams(0,dp(44),1f))
+            footer.addView(paste,LayoutParams(0,dp(44),1f));body.addView(footer)
+        }
+        show(true)
     }
     fun panel(title: String,entries: List<Pair<String,()->Unit>>) {
         beginPanel(title,"panel_close")

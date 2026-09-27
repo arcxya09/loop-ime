@@ -391,7 +391,8 @@ class SettingsActivity : Activity() {
                 prefs.correctionMode=CorrectionMode.entries[index];correction.text="纠错模式：${prefs.correctionMode.label}";dialog.dismiss()
             }.show()
         }
-        toggle("AI 预测下一小段","predict",true)
+        toggle("AI 预测下一词","predict",true)
+        label("开启云端 AI 后，文字上屏并停顿时预测下一个词，候选栏标记 AI；点选才插入。可从文本编辑或候选栏长按菜单手动触发。仅发送本次输入上下文；隐私字段、剪贴板插入和仅本地词条不发送。",13f)
         label("纠错会保护数字、单位、否定词和已知专有词；不确定的改动显示为候选。AI 返回过慢或输入位置改变时放弃修改。可在键盘左上角 Loop 工具中选择“撤销 AI 修改”恢复。",13f)
     }
     private fun speechPage() {
