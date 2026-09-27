@@ -31,17 +31,5 @@ class BailianProtocolTest {
         assertEquals(AsrFailureKind.NETWORK,BailianProtocol.taskError("CLIENT_ERROR","request timeout after 23 seconds").kind)
         assertFalse(CloudAsrProfile("private-key").toString().contains("private-key"))
     }
-    @Test fun replayRemovesConfirmedAudioAtExactSampleBoundary() {
-        val buffer=PcmReplay(128)
-        buffer.append(ShortArray(32) { it.toShort() });buffer.append(ShortArray(32) { (it+32).toShort() })
-        buffer.confirm(3);assertEquals(16,buffer.size)
-        assertArrayEquals(ShortArray(16) { (it+48).toShort() },buffer.takeTail().single())
-        assertEquals(0,buffer.size)
-    }
-    @Test fun replayOverflowAndInvalidTimestampDoNotSilentlyDiscardTail() {
-        val buffer=PcmReplay(32);buffer.append(ShortArray(32) { 7 })
-        assertThrows(IllegalStateException::class.java) { buffer.append(shortArrayOf(8)) }
-        assertThrows(IllegalArgumentException::class.java) { buffer.confirm(100000) }
-        assertEquals(32,buffer.size);assertArrayEquals(ShortArray(32) { 7 },buffer.takeTail().single())
-    }
+
 }

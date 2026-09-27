@@ -18,8 +18,8 @@ android {
         applicationId = "app.loop.ime"
         minSdk = 37
         targetSdk = 37
-        versionCode = 24
-        versionName = "0.3.0"
+        versionCode = 25
+        versionName = "0.3.1"
         ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
         testInstrumentationRunner = providers.gradleProperty("loopTestRunner")
             .orElse("app.loop.ime.LoopInstrumentation").get()
@@ -29,7 +29,6 @@ android {
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     packaging { jniLibs { useLegacyPackaging = false }; resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*") }
-    androidResources { noCompress += listOf("onnx", "vocab") }
     testOptions {
         unitTests.isIncludeAndroidResources = true
         // Robolectric's Android 17 runtime accesses JDK 21 file descriptors during app setup.
@@ -39,7 +38,6 @@ android {
 dependencies {
     implementation("androidx.core:core:1.18.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation(files("libs/sherpa-onnx-1.13.8.aar"))
     implementation("net.zetetic:sqlcipher-android:4.10.0@aar")
     implementation("androidx.sqlite:sqlite:2.5.2")
     testImplementation("junit:junit:4.13.2")

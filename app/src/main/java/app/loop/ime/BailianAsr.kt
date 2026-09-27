@@ -120,7 +120,7 @@ internal class BailianAsr(private val profile: CloudAsrProfile,private val words
     override fun audio(pcm: ShortArray): Boolean {
         if(closed || !started || finishing)return false
         val ws=socket ?: return false
-        // Bound unsent audio to 4 seconds. The controller retains the unconfirmed tail for offline recovery.
+        // Bound unsent audio to 4 seconds. The controller stops recording if the transport cannot keep up.
         if(ws.queueSize()>128000)return false
         return ws.send(BailianProtocol.pcm16(pcm).toByteString())
     }

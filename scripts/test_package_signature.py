@@ -9,6 +9,14 @@ spec.loader.exec_module(packager)
 
 
 class SignatureReportTest(unittest.TestCase):
+    def test_cloud_only_apk_keeps_input_engine_and_database_libraries(self):
+        packager.validate_cloud_only_assets(['classes.dex', 'lib/arm64-v8a/libloop_rime.so', 'lib/arm64-v8a/librime_jni.so', 'lib/arm64-v8a/libsqlcipher.so'])
+
+    def test_cloud_only_apk_rejects_offline_runtime_models_and_licenses(self):
+        for name in ('lib/arm64-v8a/libsherpa-onnx-jni.so', 'lib/x86_64/libonnxruntime.so', 'assets/asr/tokens.txt', 'assets/encoder.onnx', 'assets/licenses/sherpa-Apache-2.0.txt'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                packager.validate_cloud_only_assets([name])
+
     def report(self, schemes=('v1', 'v2', 'v3'), signer=None):
         return '\n'.join(['Verifies', 'Number of signers: 1',
             *[f'Verified using {s} scheme (signature): {str(s in schemes).lower()}' for s in ('v1', 'v2', 'v3')],

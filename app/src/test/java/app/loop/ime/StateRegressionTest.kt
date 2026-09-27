@@ -103,19 +103,5 @@ class StateRegressionTest {
         Selection.setSelection(text,0,3);e.selection(0,3,-1,-1);assertTrue(e.setComposition("新字","voice"));assertTrue(e.sealVoice("新字",""))
         assertEquals(TextEdit(0,3,"新字"),e.lastEdit);assertEquals("新字",text.toString())
     }
-    @Test fun permanentOrNullBindingAllowsTheNextSessionToReconnect() {
-        var binds=0;var unbinds=0
-        val c=object: ContextWrapper(RuntimeEnvironment.getApplication()) {
-            override fun bindService(i: Intent,connection: ServiceConnection,flags: Int): Boolean { binds++;return true }
-            override fun unbindService(connection: ServiceConnection) { unbinds++ }
-        }
-        val speech=SpeechController(c) { _,_-> };speech.localModelProvider={ "/test-model" }
-        fun start()=ReflectionHelpers.callInstanceMethod<Unit>(speech,"startLocal",ClassParameter.from(String::class.java,"测试"))
-        try {
-            val connection=ReflectionHelpers.getField<ServiceConnection>(speech,"connection")
-            start();connection.onBindingDied(ComponentName(c,AsrService::class.java));start()
-            assertEquals(2,binds);assertEquals(1,unbinds)
-            connection.onNullBinding(ComponentName(c,AsrService::class.java));start();assertEquals(3,binds)
-        } finally { speech.destroy() }
-    }
+
 }

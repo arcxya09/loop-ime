@@ -36,4 +36,4 @@ python3 scripts/publish-release.py --bundle dist --dry-run
 
 最后一个命令只校验，不联网发布。实际手动发布时使用已授权的安全环境中的 `GH_TOKEN` 和明确的 `--repo owner/name`，去掉 `--dry-run`；不要把 Token 写进源文件、Git 配置或对话。CI 会自动提供这两个环境值。
 
-历史设备验证资料随源码保留。新的 CI 执行不代表重新跑过真机、实际麦克风或用户 API 账号测试。开发签名说明见 `signing/README.md`；离线语音权重仍按需下载。
+历史设备验证资料随源码保留。新的 CI 执行不代表重新跑过真机、实际麦克风或用户 API 账号测试。开发签名说明见 `signing/README.md`；0.3.1 起已移除离线语音运行库及模型下载功能。

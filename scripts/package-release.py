@@ -41,6 +41,12 @@ def validate_release_version(version):
         raise ValueError('From 0.2.0 onward, publish stable semantic versions only; no alpha/beta/rc suffix.')
 
 
+def validate_cloud_only_assets(names):
+    for name in names:
+        if any(marker in name.lower() for marker in ('sherpa', 'onnx')) or name.startswith('assets/asr/'):
+            raise ValueError(f'Removed offline speech dependency is still packaged: {name}')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apk', required=True, type=Path)
@@ -69,6 +75,7 @@ def main():
     run([str(build / 'zipalign'), '-c', '-P', '16', '4', str(args.apk.resolve())])
     libraries = 0
     with zipfile.ZipFile(args.apk) as apk:
+        validate_cloud_only_assets(apk.namelist())
         if apk.testzip():
             raise SystemExit('Corrupt APK ZIP.')
         for name in apk.namelist():

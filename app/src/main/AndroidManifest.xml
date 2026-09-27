@@ -22,7 +22,6 @@
             <intent-filter><action android:name="android.view.InputMethod" /></intent-filter>
             <meta-data android:name="android.view.im" android:resource="@xml/method" />
         </service>
-        <service android:name=".AsrService" android:exported="false" android:process=":asr" />
         <service android:name=".OtpNotificationListener" android:label="Loop 验证码建议" android:exported="true" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
         </service>

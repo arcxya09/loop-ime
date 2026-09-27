@@ -14,7 +14,7 @@ import javax.crypto.KeyGenerator
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[37],application=Application::class)
 class CloudSpeechSettingsTest {
-    @Test fun unvalidatedInternetStillAttemptsCloudButAbsentOrCaptiveNetworksUseOffline() {
+    @Test fun unvalidatedInternetStillAttemptsCloudButAbsentOrCaptiveNetworksBlockSpeech() {
         val caps=NetworkCapabilities();shadowOf(caps).addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         assertTrue(CloudSpeechSettings.usableNetwork(caps))
         assertFalse(CloudSpeechSettings.usableNetwork(null))
