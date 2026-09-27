@@ -79,6 +79,21 @@ class SafeEditor(private val connection: ()->InputConnection?) {
         }
         return ok
     }
+    fun deleteToStart(): Boolean {
+        lastEdit=null
+        if(owner.isNotEmpty())return false
+        val ic=connection() ?: return false
+        // Require an actual absolute, collapsed selection; never guess from stale callbacks.
+        val s=ic.getSurroundingText(0,0,0) ?: return false
+        if(s.offset<0 || s.selectionStart!=s.selectionEnd)return false
+        val end=s.offset+s.selectionStart
+        if(end<=0)return false
+        val removed=if(end<=4096)ic.getTextBeforeCursor(end,0)?.toString()?.takeIf { it.length==end } else null
+        if(!ic.deleteSurroundingText(end,0))return false
+        revision++;expected.clear();expect(0);lastEdit=TextEdit(0,end,"")
+        ownedUndo=removed?.let { OwnedUndo("",it,revision,generation) }
+        return true
+    }
     fun patch(original: String, replacement: String, expectedRevision: Long, expectedGeneration: Long): Boolean {
         lastEdit=null
         if(owner.isNotEmpty() || revision!=expectedRevision || generation!=expectedGeneration)return false

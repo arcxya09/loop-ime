@@ -20,6 +20,28 @@ import org.robolectric.util.ReflectionHelpers.ClassParameter
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[37],application=Application::class)
 class StateRegressionTest {
+    @Test fun deleteToStartPreservesSuffixAndCanUndoWithoutSplittingEmoji() {
+        val original="前文😀\n第二行尾部";val text=SpannableStringBuilder(original)
+        val end=original.indexOf("尾");Selection.setSelection(text,end)
+        val ic=object: BaseInputConnection(View(RuntimeEnvironment.getApplication()),true) { override fun getEditable(): Editable=text }
+        val editor=SafeEditor { ic };editor.start(end)
+        assertTrue(editor.deleteToStart());assertEquals("尾部",text.toString());assertEquals(TextEdit(0,end,""),editor.lastEdit)
+        assertTrue(editor.undoLast());assertEquals(original,text.toString())
+        Selection.setSelection(text,1,3);assertFalse(editor.deleteToStart());assertEquals(original,text.toString())
+        Selection.setSelection(text,0);assertFalse(editor.deleteToStart())
+    }
+    @Test fun deleteToStartRefusesUnknownBoundsAndDoesNotReadHugeDocuments() {
+        val text=SpannableStringBuilder("甲".repeat(10000)+"后");Selection.setSelection(text,10000)
+        var reads=0;var available=true
+        val ic=object: BaseInputConnection(View(RuntimeEnvironment.getApplication()),true) {
+            override fun getEditable(): Editable=text
+            override fun getSurroundingText(beforeLength: Int,afterLength: Int,flags: Int)=if(available)super.getSurroundingText(beforeLength,afterLength,flags) else null
+            override fun getTextBeforeCursor(n: Int,flags: Int): CharSequence? { reads++;return super.getTextBeforeCursor(n,flags) }
+        }
+        val editor=SafeEditor { ic };editor.start(10000);available=false
+        assertFalse(editor.deleteToStart());assertEquals(10001,text.length)
+        available=true;assertTrue(editor.deleteToStart());assertEquals("后",text.toString());assertFalse(editor.canUndo);assertEquals(0,reads)
+    }
     @Test fun ownedUndoRestoresInsertDeleteAndRefusesAnExternalEdit() {
         val text=SpannableStringBuilder().apply { Selection.setSelection(this,0) }
         val ic=object: BaseInputConnection(View(RuntimeEnvironment.getApplication()),true) { override fun getEditable(): Editable=text }

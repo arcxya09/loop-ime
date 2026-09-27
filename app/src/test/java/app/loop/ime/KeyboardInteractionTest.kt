@@ -27,6 +27,43 @@ import java.time.Duration
 @Config(sdk=[37],application=Application::class)
 @LooperMode(LooperMode.Mode.PAUSED)
 class KeyboardInteractionTest {
+    @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers="zh-rCN-w360dp-h800dp-xxhdpi")
+    fun deleteSwipeArmsBubbleCancelsOnReturnAndPreservesHeight()=withKeyboard { k,events ->
+        val delete=k.findViewWithTag<View>("delete");val hint=k.findViewWithTag<TextView>("delete_hint")
+        val height=k.measuredHeight;val x=delete.width/2f;val y=delete.height/2f
+        touch(delete,MotionEvent.ACTION_DOWN,x,y);assertEquals("上滑清空",hint.text.toString())
+        touch(delete,MotionEvent.ACTION_MOVE,x,y-150*k.resources.displayMetrics.density)
+        assertEquals("松开清空",hint.text.toString());measure(k);assertEquals(height,k.measuredHeight);preview(k,"clear-swipe-0.3.2")
+        touch(delete,MotionEvent.ACTION_UP,x,-150f);assertEquals(listOf("delete_to_start"),events);assertEquals(View.GONE,hint.visibility)
+        events.clear();touch(delete,MotionEvent.ACTION_DOWN,x,y);touch(delete,MotionEvent.ACTION_MOVE,x,-200f)
+        touch(delete,MotionEvent.ACTION_MOVE,x,y);touch(delete,MotionEvent.ACTION_UP,x,y);assertTrue(events.isEmpty())
+        touch(delete,MotionEvent.ACTION_DOWN,x,y);touch(delete,MotionEvent.ACTION_MOVE,x,-200f)
+        touch(delete,MotionEvent.ACTION_UP,x,y);assertTrue(events.isEmpty())
+        touch(delete,MotionEvent.ACTION_DOWN);touch(delete,MotionEvent.ACTION_UP);assertEquals(listOf("delete"),events)
+    }
+    @Test fun deleteHoldHasNoExtraReleaseAndStopsOnCancelNavigationOrDetach()=withKeyboard { k,events ->
+        var delete=k.findViewWithTag<View>("delete")
+        touch(delete,MotionEvent.ACTION_DOWN);waitHold();val n=events.size;assertTrue(n>0)
+        touch(delete,MotionEvent.ACTION_UP);waitHold();assertEquals(n,events.size)
+        for(action in listOf(MotionEvent.ACTION_CANCEL,MotionEvent.ACTION_POINTER_DOWN)) {
+            events.clear();touch(delete,MotionEvent.ACTION_DOWN);touch(delete,action);waitHold();touch(delete,MotionEvent.ACTION_UP);assertTrue(events.isEmpty())
+        }
+        touch(delete,MotionEvent.ACTION_DOWN);k.cancelDeleteGesture();waitHold();assertTrue(events.isEmpty())
+        touch(delete,MotionEvent.ACTION_DOWN);k.setMode(false);waitHold();assertTrue(events.isEmpty())
+        delete=k.findViewWithTag("delete");touch(delete,MotionEvent.ACTION_DOWN);touch(delete,MotionEvent.ACTION_MOVE,-1000f);touch(delete,MotionEvent.ACTION_UP);assertTrue(events.isEmpty())
+    }
+    @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers="zh-rCN-w360dp-h800dp-xxhdpi")
+    fun clipboardPiecesKeepDuplicatesAndAssembleInSourceOrder()=withKeyboard { k,_ ->
+        val inserted=mutableListOf<String>();val height=k.measuredHeight
+        k.clipboardParts("我爱我😀",inserted::add);measure(k);assertEquals(height,k.measuredHeight)
+        k.findViewWithTag<View>("split:2").performClick();k.findViewWithTag<View>("split:1").performClick()
+        assertEquals("爱我",k.findViewWithTag<TextView>("split_preview").text.toString());measure(k);preview(k,"clipboard-split-0.3.2")
+        k.findViewWithTag<View>("split_insert").performClick();assertEquals(listOf("爱我"),inserted)
+        k.findViewWithTag<View>("split:1").performClick();k.findViewWithTag<View>("split:2").performClick()
+        assertFalse(k.findViewWithTag<View>("split_insert").isEnabled)
+    }
     private fun all(v: View): List<View> = listOf(v)+(if(v is ViewGroup)(0 until v.childCount).flatMap { all(v.getChildAt(it)) } else emptyList())
     private fun measure(v: View) { v.measure(View.MeasureSpec.makeMeasureSpec(1080,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));v.layout(0,0,v.measuredWidth,v.measuredHeight) }
     private fun preview(k: View,name: String) {
