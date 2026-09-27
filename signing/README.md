@@ -1,6 +1,6 @@
-# Alpha 开发签名
+# 覆盖更新与原开发签名
 
-`loop-development.jks` 是已随 Loop 源码交付的公开开发签名。alias 为 `androiddebugkey`，仓库中 Gradle 配置包含其开发密码。保留此签名可使当前 Alpha APK 覆盖更新，避免用户卸载后丢失应用数据。
+`loop-development.jks` 是已随 Loop 源码交付的公开开发签名。alias 为 `androiddebugkey`，仓库中 Gradle 配置包含其开发密码。0.2 正式版继续保留此签名，使当前 Alpha 安装可覆盖升级，避免用户卸载后丢失应用数据。正式版发布通道不代表商业签名迁移。
 
 证书 SHA-256：`8ce80c674b10d7a75f2262e711337f1fd53c6b23e9554fe04fab1bd8a4ae6bcb`。
 

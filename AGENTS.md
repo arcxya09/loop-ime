@@ -5,9 +5,10 @@
 - 开始修改前检查远程仓库、当前分支及用户未提交的修改。使用用户指定的仓库；没有仓库地址或写入授权时，先完成本地可验证的工作，再说明缺少的连接信息。不得猜测仓库所有者、创建未经指定的公开仓库、强制推送或覆盖他人提交。
 - 每次交付更新递增 `app/build.gradle.kts` 的 `versionCode` 并更新 `versionName`、`CHANGELOG.md` 和当前 Release 说明。已发布标签和 APK 不覆盖。初次入库沿用当前已交付的 `0.1.12-alpha.13`；后续交付更新均使用新版本。
 - 完成相关验证后提交、推送。默认分支的工作流负责构建及发布；检查工作流和 Release 的实际结果后再告诉用户已完成。不能把本地提交、已推送或排队中的工作流说成 Release 已发布。
-- GitHub Release 至少包括带版本号的 APK、完整源码 ZIP、`SHA256SUMS.txt` 和 `release-manifest.json`。Alpha 版本标记为预发布。
+- 从 `0.2.0` 起按用户要求仅发布正式版，使用 `major.minor.patch`，不再使用 Alpha/Beta/RC 后缀；GitHub Release 设置 `prerelease=false` 并更新 Latest。历史 Alpha 标签和附件保留，不重新发布。
+- GitHub Release 至少包括带版本号的 APK、完整源码 ZIP、`SHA256SUMS.txt` 和 `release-manifest.json`。
 - 初次发布可使用已经交付并核验的 APK；确保它与发布提交中的应用源码和版本一致。后续发布由 CI 构建，保持同一开发签名以支持覆盖安装。
-- API Key、输入历史、通讯录、设备数据库、个人日志和备份不得进入 Git。`signing/loop-development.jks` 是此前已随源码交付的公开开发签名，允许提交以保证 Alpha 覆盖更新；禁止用新签名替换现有签名。正式商业签名必须另行迁移设计。
+- API Key、输入历史、通讯录、设备数据库、个人日志和备份不得进入 Git。`signing/loop-development.jks` 是此前已随源码交付的公开开发签名，允许提交以保证现有安装覆盖更新（包括 Alpha 升级到 0.2 正式版）；禁止用新签名替换现有签名。发布通道改为正式版不等于商业签名迁移，私密商业签名必须另行迁移设计。
 - 诊断与恢复代码必须保留旧数据库和原密钥；未经明确选择不得创建空库代替无法打开的旧库。涉及数据保留、密钥和隐私行为的修改要执行相应回归。
 - 优先使用现有 Gradle Wrapper、JDK 21、SDK 37.0 / Build Tools 37.0.0。测试证据注明主机、模拟器、真机及真实账号的区别。
 

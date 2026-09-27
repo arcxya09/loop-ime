@@ -8,7 +8,7 @@
 
 构建使用 JDK 21、Gradle Wrapper 9.3.1、Android SDK 37.0 和 Build Tools 37.0.0。APK 签名、包名、版本及 16 KB 对齐通过后，打包当前 Git 提交的完整源码。测试阶段只有仓库读取权限，独立发布任务拥有 `contents: write`；使用 GitHub 为任务提供的临时令牌，无需保存个人 Token。[GitHub Token 文档](https://docs.github.com/en/actions/concepts/security/github_token)
 
-Release 包含带版本号的 APK、完整源码 ZIP、`SHA256SUMS.txt`、`release-manifest.json` 和更新说明。manifest 记录源码提交、版本、测试数量、签名及文件哈希。Alpha 版本发布为预发布，不留在草稿状态。
+Release 包含带版本号的 APK、完整源码 ZIP、`SHA256SUMS.txt`、`release-manifest.json` 和更新说明。manifest 记录源码提交、版本、测试数量、签名及文件哈希。从 0.2.0 起仅发布正式版，版本必须为 `major.minor.patch` 且不低于 0.2.0；打包脚本拒绝 Alpha/Beta/RC 后缀，清单设置 `prerelease=false`，发布脚本公开后更新 Latest。历史 Alpha 附件不修改。
 
 发布时先创建草稿，所有附件上传并通过服务端大小和 SHA-256 检查后才公开。上传失败保留草稿；从 Actions 使用“Re-run failed jobs”可继续使用同一构建产物。已经发布的版本不覆盖。已有标签属于另一提交，或草稿附件与当前构建不同，会停止并要求使用正确的原始产物或提高版本号。[Release API](https://docs.github.com/en/rest/releases/releases)、[附件 API](https://docs.github.com/en/rest/releases/assets)
 

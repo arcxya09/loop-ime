@@ -28,6 +28,27 @@ import java.util.concurrent.TimeUnit
 @Config(sdk=[37],application=Application::class)
 @LooperMode(LooperMode.Mode.PAUSED)
 class NineKeyImeTest {
+    @Test fun contextualFirstCandidateIsSharedByDisplaySpaceAndEnterWithoutDoubleCountingJournal()=Fixture().use { f ->
+        val history=InputHistory {};ReflectionHelpers.setField(f.service,"history",history)
+        ReflectionHelpers.setField(f.service,"restricted",false);Prefs(f.service).set("learning",true)
+        f.press("开始");f.drain();f.type()
+        val now=System.currentTimeMillis()
+        val words=listOf(Term("事实","nihao",12,false,"choice",now,evidence=listOf(RankingEvidence("old",11,now,mapOf("这是" to 11)))),
+            Term("实施","nihao",4,false,"choice",now,evidence=listOf(RankingEvidence("context",3,now,mapOf("开始" to 3)))))
+        ReflectionHelpers.setField(f.service,"personal",words);ReflectionHelpers.callInstanceMethod<Unit>(f.service,"renderCandidates")
+        val strip=f.keyboard.findViewWithTag<View>("candidate_strip")
+        assertEquals("实施",all(strip).filterIsInstance<TextView>().first { it.text in listOf("实施","事实") }.text)
+        f.press("space");f.drain();assertEquals("开始实施",f.text.toString())
+        val pending=history.rankingEvidence("实施")
+        assertEquals(mapOf("开始" to 1),pending.single().contexts)
+        f.press("。");f.press("开始");f.drain();f.type()
+        ReflectionHelpers.setField(f.service,"personal",listOf(words[0],words[1].copy(score=5,evidence=words[1].evidence+pending)))
+        val ranked=ReflectionHelpers.callInstanceMethod<List<Term>>(f.service,"personalCandidates")
+        assertEquals(5,ranked.single { it.text=="实施" }.score)
+        assertEquals(2,ranked.single { it.text=="实施" }.evidence.size)
+        f.press("enter");f.drain();assertEquals("开始实施。开始实施",f.text.toString())
+        ReflectionHelpers.setField(f.service,"restricted",true)
+    }
     @Test fun partialRimeCommitsDoNotBindTheWholeInputCodeToTheFirstWord()=Fixture().use { f ->
         ReflectionHelpers.setField(f.service,"history",InputHistory {})
         ReflectionHelpers.setField(f.service,"restricted",false);Prefs(f.service).set("learning",true)

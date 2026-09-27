@@ -29,11 +29,16 @@ def validate_signature_report(report, require_all_schemes=False):
     """Require the original single signer; compatibility checks must verify v1, v2 and v3."""
     certificates = re.findall(r'^.*certificate SHA-256 digest: ([0-9a-f]{64})\s*$', report, re.M)
     if not certificates or set(certificates) != {SIGNER} or not re.search(r'^Number of signers: 1\s*$', report, re.M):
-        raise ValueError('APK signer changed or is ambiguous; Alpha updates must retain the original certificate.')
+        raise ValueError('APK signer changed or is ambiguous; updates must retain the original certificate.')
     schemes = set(re.findall(r'^Verified using (v[123]) scheme [^\r\n]*: true\s*$', report, re.M))
     if require_all_schemes and schemes != {'v1', 'v2', 'v3'}:
         raise ValueError('APK must verify with v1, v2 and v3; a v2-only package is not sufficient for installer compatibility.')
     return sorted(schemes)
+
+
+def validate_release_version(version):
+    if not re.fullmatch(r'\d+\.\d+\.\d+', version) or tuple(map(int, version.split('.'))) < (0, 2, 0):
+        raise ValueError('From 0.2.0 onward, publish stable semantic versions only; no alpha/beta/rc suffix.')
 
 
 def main():
@@ -44,6 +49,7 @@ def main():
     args = parser.parse_args()
     source = (ROOT / 'app/build.gradle.kts').read_text()
     version = re.search(r'versionName\s*=\s*"([0-9A-Za-z.+-]+)"', source)[1]
+    validate_release_version(version)
     code = int(re.search(r'versionCode\s*=\s*(\d+)', source)[1])
     commit = run(['git', 'rev-parse', 'HEAD']).strip()
     if run(['git', 'status', '--porcelain', '--untracked-files=no']).strip():
@@ -98,11 +104,11 @@ def main():
         raise SystemExit('Current version has no CHANGELOG entry.')
     body = f'# Loop 输入法 {version}\n\n' + match[1].strip()
     body += f'\n\n本次构建：{totals["tests"]} 项主机测试，{totals["skipped"]} 项跳过；Android 17 / API 37+。\n'
-    body += f'源码提交：`{commit}`。Alpha 开发签名与上一版一致，支持覆盖更新。\n'
+    body += f'源码提交：`{commit}`。沿用原开发签名，支持从 Alpha 覆盖更新。\n'
     body += 'APK 与源码 SHA-256 见附件。真机、真实账号及旧库恢复的验证边界见源码 TESTING.md。\n'
     (out / 'release-notes.md').write_text(body)
     metadata = dict(version=version, version_code=code, tag=f'v{version}', commit=commit,
-                    prerelease='-' in version, tests=totals, native_libraries=libraries,
+                    prerelease=False, tests=totals, native_libraries=libraries,
                     signer_sha256=SIGNER,
                     signature_schemes=schemes,
                     assets={p.name: dict(bytes=p.stat().st_size, sha256=digest(p)) for p in (apk_out, source_out)})

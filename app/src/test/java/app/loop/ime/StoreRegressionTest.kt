@@ -13,6 +13,59 @@ import org.robolectric.annotation.SQLiteMode
 @Config(sdk=[37],application=Application::class)
 @SQLiteMode(SQLiteMode.Mode.NATIVE)
 class StoreRegressionTest {
+    @Test fun futureChoiceAndBackupTimesNeverBecomeFreshLearningOnImport()=StoreFixture().use { f ->
+        val future=System.currentTimeMillis()+365*CandidateRanking.DAY
+        f.store.applyDraft(DraftSnapshot("future","事实","choice",false,false,1,100,listOf(LearnedChoice("事实","shishi",false,1,future,contexts=mapOf("这是" to 1)))))
+        assertEquals(0L,f.store.rankedTerms("shishi","这是").single().lastUsed)
+        val rows=mutableListOf<JSONObject>();f.store.exportRows(rows::add)
+        rows.filter { it.getString("table")=="evidence" }.forEach { it.put("last_used",future) }
+        StoreFixture().use { other ->
+            other.store.importRows(rows.asSequence())
+            val term=other.store.rankedTerms("shishi","这是").single()
+            assertEquals(0L,term.lastUsed);assertEquals(0L,term.evidence.single().time)
+            assertEquals(2,term.score)
+        }
+    }
+    @Test fun adaptiveContextsSurviveReopenBackupAndRetractWithSources()=StoreFixture().use { f ->
+        val now=System.currentTimeMillis()
+        fun save(id: String,word: String,context: String,count: Int)=f.store.applyDraft(DraftSnapshot(id,(context+word).repeat(count),"choice",false,true,1,now,
+            listOf(LearnedChoice(word,"shishi",false,count,now,"26:shishi",mapOf(context to count)))))
+        save("facts","事实","这是",8);save("implement","实施","开始",3)
+        fun first(s: PersonalStore,context: String)=s.rankedTerms("shishi",context).first().text
+        assertEquals("实施",first(f.store,"开始"));assertEquals("事实",first(f.store,"这是"))
+        assertEquals("实施",first(PersonalStore(f.database),"开始"))
+        assertEquals("实施",f.store.rankedTerms(NineKey.encode("shishi"),"开始",nineKey=true).first().text)
+        val rows=mutableListOf<JSONObject>();f.store.exportRows(rows::add)
+        StoreFixture().use { other ->
+            other.store.importRows(rows.asSequence());val once=other.store.rankedTerms("shishi","开始")
+            other.store.importRows(rows.asSequence());assertEquals(once,other.store.rankedTerms("shishi","开始"))
+            assertEquals("实施",first(other.store,"开始"))
+            other.store.deleteMemory("implement");assertEquals("事实",first(other.store,"开始"))
+            other.store.forgetTerm("事实");assertTrue(other.store.rankedTerms("shishi","这是").isEmpty())
+        }
+        f.store.replaceMemory("implement","停止实施实施实施")
+        assertTrue(f.store.rankedTerms("shishi","开始").single { it.text=="实施" }.evidence.single().contexts.isEmpty())
+    }
+    @Test fun learningWithoutHistoryRetainsOnlyBoundedContextAndImportDoesNotRefreshIt()=StoreFixture().use { f ->
+        val now=System.currentTimeMillis()
+        val draft=DraftSnapshot("local-only","开始实施","choice",false,false,1,now,listOf(LearnedChoice("实施","shishi",false,1,now,contexts=mapOf("开始" to 1))))
+        f.store.applyDraft(draft);f.store.applyDraft(draft)
+        assertTrue(f.store.memories().isEmpty());assertTrue(f.store.cloudHints(listOf("实施")).isEmpty())
+        val before=f.store.rankedTerms("shishi","开始").single()
+        assertEquals(2,before.score);assertEquals(mapOf("开始" to 1),before.evidence.single().contexts)
+        val rows=mutableListOf<JSONObject>();f.store.exportRows(rows::add)
+        f.store.importRows(rows.asSequence());assertEquals(before,f.store.rankedTerms("shishi","开始").single())
+        f.store.applyDraft(draft.copy(text="",revision=2,choices=emptyList()))
+        assertTrue(f.store.rankedTerms("shishi","开始").isEmpty())
+    }
+    @Test fun adaptivePaginationCrossesPoolBoundaryWithoutDuplicatesAndRecallsContextualWord()=StoreFixture().use { f ->
+        repeat(540) { f.store.addTerm("同音"+it.toString().padStart(3,'0'),"shishi","contacts","contact:$it") }
+        val now=System.currentTimeMillis()
+        f.store.applyDraft(DraftSnapshot("context","开始实施","choice",false,true,1,now,listOf(LearnedChoice("实施","shishi",false,1,now,contexts=mapOf("开始" to 1)))))
+        val pages=(0..8).flatMap { f.store.rankedTerms("shishi","开始",offset=it*64).take(64) }
+        assertEquals(541,pages.size);assertEquals(541,pages.map { it.text }.distinct().size)
+        assertEquals("实施",pages.first().text)
+    }
     @Test fun chosenInputCodePreservesPolyphonicRankingAcrossReopenAndBackup()=StoreFixture().use { f ->
         val raw=NineKey.encode("chongqing");val now=System.currentTimeMillis()
         f.store.applyDraft(DraftSnapshot("polyphonic","重庆","choice",false,true,1,now,listOf(LearnedChoice("重庆","zhongqing",false,1,now,CandidateRanking.inputCode(raw,true)))))
@@ -147,7 +200,7 @@ class StoreRegressionTest {
         db.execSQL("INSERT INTO clips VALUES ('clip','保留剪贴板',100,1)")
         db.version=1
     }.use { f ->
-        assertEquals(4,f.database.version)
+        assertEquals(PersonalStore.SCHEMA_VERSION,f.database.version)
         assertEquals("联系王小明",f.store.memories().single().text);assertFalse(f.store.memories().single().cloud)
         assertEquals(3,f.store.terms().single().score);assertTrue(f.store.terms(cloudOnly=true).isEmpty())
         assertEquals("保留剪贴板",f.store.clips().single().text)

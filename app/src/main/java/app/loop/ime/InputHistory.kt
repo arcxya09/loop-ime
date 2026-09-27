@@ -5,18 +5,18 @@ import org.json.JSONObject
 import java.util.UUID
 
 data class TextEdit(val start: Int,val end: Int,val text: String)
-data class LearnedChoice(val text: String,val pinyin: String="",val cloud: Boolean=false,val count: Int=1,val lastUsed: Long=0,val inputCode: String="")
+data class LearnedChoice(val text: String,val pinyin: String="",val cloud: Boolean=false,val count: Int=1,val lastUsed: Long=0,val inputCode: String="",val contexts: Map<String,Int> = emptyMap())
 data class DraftSnapshot(val id: String,val text: String,val source: String,val cloud: Boolean,
     val remember: Boolean,val revision: Long,val time: Long,val choices: List<LearnedChoice> = emptyList()) {
     fun encode(): ByteArray=JSONObject().put("id",id).put("text",text).put("source",source).put("cloud",cloud)
         .put("remember",remember).put("revision",revision).put("time",time).put("choices",JSONArray(choices.map {
-            JSONObject().put("text",it.text).put("pinyin",it.pinyin).put("cloud",it.cloud).put("count",it.count).put("last_used",it.lastUsed).put("input_code",it.inputCode)
+            JSONObject().put("text",it.text).put("pinyin",it.pinyin).put("cloud",it.cloud).put("count",it.count).put("last_used",it.lastUsed).put("input_code",it.inputCode).put("contexts",CandidateRanking.encodeContexts(it.contexts,it.count))
         })).toString().toByteArray(Charsets.UTF_8)
     companion object {
         fun decode(bytes: ByteArray): DraftSnapshot {
             val j=JSONObject(bytes.toString(Charsets.UTF_8));val a=j.getJSONArray("choices")
             return DraftSnapshot(j.getString("id"),j.getString("text"),j.getString("source"),j.getBoolean("cloud"),j.getBoolean("remember"),j.getLong("revision"),j.getLong("time"),
-                (0 until a.length()).map { val x=a.getJSONObject(it);LearnedChoice(x.getString("text"),x.getString("pinyin"),x.getBoolean("cloud"),x.optInt("count",1).coerceIn(1,100000),x.optLong("last_used",0).coerceAtLeast(0),x.optString("input_code","")) })
+                (0 until a.length()).map { val x=a.getJSONObject(it);val count=x.optInt("count",1).coerceIn(1,100000);LearnedChoice(x.getString("text"),x.getString("pinyin"),x.getBoolean("cloud"),count,x.optLong("last_used",0).coerceAtLeast(0),x.optString("input_code",""),CandidateRanking.decodeContexts(x.optString("contexts","{}"),count)) })
         }
     }
 }
@@ -27,17 +27,25 @@ internal class InputHistory(private val write: (DraftSnapshot)->Unit) {
     private val chunks=mutableListOf<Chunk>()
     private var active: Chunk?=null
     private var lastChoiceTime=0L
+    private var pendingContext=""
+    var revision=0L
+        private set
     fun recentChoices()=chunks.flatMap { it.snapshot.choices }.sortedByDescending { it.lastUsed }.distinctBy { it.text }
+    fun rankingOrigins()=chunks.map { it.snapshot.id }.toSet()
+    fun rankingEvidence(text: String)=chunks.flatMap { c -> c.snapshot.choices.filter { it.text==text }.map { RankingEvidence(c.snapshot.id,it.count,it.lastUsed,it.contexts) } }
     val lastId get()=active?.snapshot?.id.orEmpty()
     private fun publish(chunk: Chunk,text: String=chunk.snapshot.text) {
+        revision++
         chunk.snapshot=chunk.snapshot.copy(text=text,revision=chunk.snapshot.revision+1,
-            choices=chunk.snapshot.choices.map { it.copy(count=minOf(it.count,occurrences(text,it.text))) }.filter { it.count>0 })
+            choices=chunk.snapshot.choices.map { it.copy(count=minOf(it.count,occurrences(text,it.text)),
+                contexts=if(text.startsWith(chunk.snapshot.text))it.contexts else emptyMap()) }.filter { it.count>0 })
         if(chunk.snapshot.remember || chunk.hadChoice)write(chunk.snapshot)
     }
-    fun clear() { chunks.clear();active=null }
+    fun clear() { chunks.clear();active=null;pendingContext="";revision++ }
     fun separate() { active=null }
     fun apply(edit: TextEdit?,source: String,remember: Boolean,cloud: Boolean) {
         if(edit==null)return
+        pendingContext=if(edit.start>=0)CandidateRanking.context(context(edit.start)) else ""
         val start=edit.start;val end=maxOf(start,edit.end);val delta=edit.text.length-(end-start)
         // In-place edits retain their record and conservatively combine consent.
         val containing=chunks.firstOrNull { c -> start>=0 && c.start>=0 && start>=c.start && end<=c.start+c.snapshot.text.length &&
@@ -61,7 +69,7 @@ internal class InputHistory(private val write: (DraftSnapshot)->Unit) {
                 val original=chunk.snapshot
                 publish(chunk,before)
                 val right=Chunk(start+edit.text.length,original.copy(id=UUID.randomUUID().toString(),text=after,revision=0,
-                    choices=original.choices.filter { after.contains(it.text) }),chunk.hadChoice)
+                    choices=original.choices.filter { after.contains(it.text) }.map { it.copy(contexts=emptyMap()) }),chunk.hadChoice)
                 chunks.add(right);publish(right)
             } else {
                 if(before.isEmpty())chunk.start=start+edit.text.length
@@ -79,7 +87,12 @@ internal class InputHistory(private val write: (DraftSnapshot)->Unit) {
         chunk.hadChoice=true
         val old=chunk.snapshot.choices.firstOrNull { it.text==text }
         lastChoiceTime=maxOf(System.currentTimeMillis(),lastChoiceTime+1)
-        val choice=LearnedChoice(text,pinyin.ifBlank { old?.pinyin.orEmpty() },cloud && (old?.cloud ?: true),(old?.count ?: 0)+1,lastChoiceTime,inputCode)
+        val contexts=old?.contexts.orEmpty().toMutableMap()
+        if(pendingContext.isNotEmpty()) {
+            val n=(contexts.remove(pendingContext) ?: 0)+1
+            val ordered=linkedMapOf(pendingContext to n);ordered.putAll(contexts);contexts.clear();contexts.putAll(ordered.entries.take(CandidateRanking.MAX_CONTEXTS).associate { it.toPair() })
+        }
+        val choice=LearnedChoice(text,pinyin.ifBlank { old?.pinyin.orEmpty() },cloud && (old?.cloud ?: true),(old?.count ?: 0)+1,lastChoiceTime,inputCode,contexts)
         chunk.snapshot=chunk.snapshot.copy(choices=chunk.snapshot.choices.filterNot { it.text==text }+choice)
         publish(chunk)
     }

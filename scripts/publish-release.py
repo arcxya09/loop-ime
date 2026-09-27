@@ -119,7 +119,7 @@ def publish(api, metadata, files, notes):
     else:
         release = api.call('POST', '/releases', dict(tag_name=tag, target_commitish=commit,
             name='Loop 输入法 ' + metadata['version'], body=notes + '\n\n' + marker,
-            draft=True, prerelease=metadata['prerelease'], make_latest='false' if metadata['prerelease'] else 'legacy'))
+            draft=True, prerelease=metadata['prerelease'], make_latest='false' if metadata['prerelease'] else 'true'))
     release_id = release['id']
     assets = {a['name']: a for a in api.call('GET', f'/releases/{release_id}/assets?per_page=100')}
     for file in files:
@@ -135,7 +135,7 @@ def publish(api, metadata, files, notes):
         if uploaded['state'] != 'uploaded' or uploaded['size'] != file.stat().st_size or uploaded.get('digest') != digest:
             raise ValueError('Uploaded asset did not pass size/hash verification; keeping draft unpublished.')
     completed = api.call('PATCH', f'/releases/{release_id}', dict(draft=False,
-        make_latest='false' if metadata['prerelease'] else 'legacy'))
+        prerelease=metadata['prerelease'], make_latest='false' if metadata['prerelease'] else 'true'))
     if completed['draft']:
         raise ValueError('GitHub did not publish the release.')
     return completed['html_url']

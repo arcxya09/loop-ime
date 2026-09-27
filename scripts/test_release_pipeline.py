@@ -54,6 +54,26 @@ class PublicationTest(unittest.TestCase):
         self.assertTrue(api.calls[2][2]['draft'])
         self.assertFalse(api.calls[-1][2]['draft'])
 
+    def test_stable_release_is_public_non_preview_and_latest(self):
+        self.meta.update(version='0.2.0', tag='v0.2.0', prerelease=False)
+        api = self.api()
+        publisher.publish(api, self.meta, [self.file], 'Stable release')
+        create = next(payload for method, path, payload in api.calls if method == 'POST' and path == '/releases')
+        self.assertFalse(create['prerelease'])
+        self.assertEqual('true', create['make_latest'])
+        self.assertFalse(api.calls[-1][2]['prerelease'])
+        self.assertEqual('true', api.calls[-1][2]['make_latest'])
+
+    def test_new_packages_require_stable_semantic_version(self):
+        spec = importlib.util.spec_from_file_location('packager', Path(__file__).with_name('package-release.py'))
+        packager = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(packager)
+        for version in ('0.2.0', '0.2.1', '0.10.0', '1.0.0'):
+            packager.validate_release_version(version)
+        for version in ('0.1.21-alpha.22', '0.2.0-alpha.1', '0.2.0-rc.1', '0.2', '0.1.99'):
+            with self.assertRaises(ValueError):
+                packager.validate_release_version(version)
+
     def test_failed_upload_or_bad_server_hash_never_publishes(self):
         for option in ('upload_fails', 'bad_digest'):
             api = self.api(**{option: True})

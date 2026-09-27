@@ -41,6 +41,10 @@ class LoopImeService : InputMethodService() {
     private var panelRevision=0L
     private var personal=emptyList<Term>()
     private var personalHasMore=false
+    private data class RankKey(val raw: String,val nine: Boolean,val context: String,val historyRevision: Long,val learn: Boolean,val privateMode: Boolean,val restricted: Boolean,val minute: Long)
+    private var rankKey: RankKey?=null
+    private var rankSource: List<Term>?=null
+    private var rankedPersonal=emptyList<Term>()
     private var suggestions=emptyList<String>()
     private var correctionSuggestion: String?=null
     private val keys=ArrayDeque<String>()
@@ -317,20 +321,20 @@ class LoopImeService : InputMethodService() {
         val epoch=fieldEpoch;val raw=state.raw;val nine=nineKey;val context=latestText
         if(raw.isEmpty() && context.isBlank()) { personal=emptyList();renderCandidates();return }
         LoopApp.background(this,{ val store=PersonalStore.get(this)
-            val list=if(raw.isEmpty())store.continuationTerms(context) else store.terms(raw.replace("'",""),65,nineKey=nine)
+            val list=if(raw.isEmpty())store.continuationTerms(context) else store.rankedTerms(raw.replace("'",""),context,nineKey=nine)
             LoopApp.main.post { if(epoch==fieldEpoch && state.raw==raw && context==latestText && nine==nineKey && !restricted && !prefs.privateMode) { personal=list.take(64);personalHasMore=raw.isNotEmpty() && list.size>64;renderCandidates() } }
         })
     }
     private fun loadMorePersonal(done: ()->Unit) {
-        val epoch=fieldEpoch;val raw=state.raw;val nine=nineKey;val offset=personal.size
+        val epoch=fieldEpoch;val raw=state.raw;val nine=nineKey;val offset=personal.size;val context=latestText
         if(restricted || prefs.privateMode) { personalHasMore=false;keyboard.candidatePaging(state.hasMore);done();return }
         keyboard.candidatePaging(true,true)
         var list=emptyList<Term>()
         LoopApp.background(this,{
-            list=PersonalStore.get(this).terms(raw.replace("'",""),65,nineKey=nine,offset=offset)
+            list=PersonalStore.get(this).rankedTerms(raw.replace("'",""),context,nineKey=nine,offset=offset)
         }) { error ->
             if(epoch==fieldEpoch) {
-                if(state.raw==raw && nine==nineKey) {
+                if(state.raw==raw && nine==nineKey && latestText==context) {
                     if(error!=null)keyboard.status("个人词库加载失败，请重试")
                     else if(!restricted && !prefs.privateMode && personal.size==offset) { personal=(personal+list.take(64)).distinctBy { it.text };personalHasMore=list.size>64 }
                     renderCandidates()
@@ -353,14 +357,29 @@ class LoopImeService : InputMethodService() {
     }
     private fun personalCandidates(): List<Term> {
         if(state.raw.isEmpty() || state.selStart!=0 || state.caret!=state.raw.length)return emptyList()
+        val key=RankKey(state.raw,nineKey,latestText,history.revision,prefs.learning,prefs.privateMode,restricted,System.currentTimeMillis()/60000)
+        if(rankKey==key && rankSource===personal)return rankedPersonal
         val matches=personal.filter { CandidateRanking.exact(it,state.raw,nineKey) || NineKey.matchesPrefix(it.pinyin,state.raw,nineKey) }.associateBy { it.text }.toMutableMap()
-        if(!restricted && !prefs.privateMode && prefs.learning)history.recentChoices().forEach { choice ->
-            if(choice.inputCode==CandidateRanking.inputCode(state.raw,nineKey) || (choice.pinyin.isNotBlank() && NineKey.matchesPrefix(choice.pinyin.replace(" ",""),state.raw,nineKey))) {
-                val old=matches[choice.text]
-                matches[choice.text]=Term(choice.text,old?.pinyin ?: choice.pinyin.replace(" ",""),maxOf(old?.score ?: 0,choice.count+1),choice.cloud && (old?.cloud ?: true),"choice",maxOf(choice.lastUsed,old?.lastUsed ?: 0),choice.inputCode)
+        if(!restricted && !prefs.privateMode && prefs.learning) {
+            val origins=history.rankingOrigins()
+            // Replace pending origins, never add the journal and its persisted copy together.
+            matches.replaceAll { _,t ->
+                val old=t.evidence.filter { it.origin in origins };val pending=history.rankingEvidence(t.text)
+                val evidence=t.evidence.filterNot { it.origin in origins }+pending
+                if(old.isEmpty() && pending.isEmpty())t else t.copy(score=(t.score-old.sumOf { it.count }+pending.sumOf { it.count }).coerceAtLeast(1),
+                    lastUsed=evidence.maxOfOrNull { it.time } ?: 0,evidence=evidence)
+            }
+            history.recentChoices().forEach { choice ->
+                if(choice.inputCode==CandidateRanking.inputCode(state.raw,nineKey) || (choice.pinyin.isNotBlank() && NineKey.matchesPrefix(choice.pinyin.replace(" ",""),state.raw,nineKey))) {
+                    val old=matches[choice.text]
+                    val evidence=old?.evidence ?: history.rankingEvidence(choice.text)
+                    matches[choice.text]=Term(choice.text,old?.pinyin ?: choice.pinyin.replace(" ",""),old?.score ?: (1+evidence.sumOf { it.count }),choice.cloud && (old?.cloud ?: true),"choice",maxOf(choice.lastUsed,old?.lastUsed ?: 0),choice.inputCode,evidence)
+                }
             }
         }
-        return CandidateRanking.sort(matches.values.toList())
+        rankedPersonal=CandidateRanking.sort(matches.values.toList(),context=latestText)
+        rankKey=key;rankSource=personal
+        return rankedPersonal
     }
     private fun renderCandidates() {
         if(!::keyboard.isInitialized)return

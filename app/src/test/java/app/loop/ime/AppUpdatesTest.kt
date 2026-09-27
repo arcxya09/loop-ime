@@ -27,11 +27,11 @@ class AppUpdatesTest {
     private val c get()=RuntimeEnvironment.getApplication()
     private val prefs get()=c.getSharedPreferences("loop-updates",Context.MODE_PRIVATE)
     private fun info(code: Long,signature: String="010203")=PackageInfo().apply {
-        packageName=c.packageName;setLongVersionCode(code);versionName="0.1.$code-alpha.$code"
+        packageName=c.packageName;setLongVersionCode(code);versionName="0.2.$code"
         applicationInfo=ApplicationInfo().apply { minSdkVersion=37 }
         signingInfo=ReflectionHelpers.callConstructor(SigningInfo::class.java).also { shadowOf(it).setSignatures(arrayOf(Signature(signature))) }
     }
-    private fun release()=UpdateRelease("0.1.16-alpha.16",16,4,UpdateRelease.digest("good".toByteArray()),UpdateRelease.REPO+"/releases/download/v0.1.16-alpha.16/Loop-IME-0.1.16-alpha.16.apk","notes",true)
+    private fun release()=UpdateRelease("0.2.16",16,4,UpdateRelease.digest("good".toByteArray()),UpdateRelease.REPO+"/releases/download/v0.2.16/Loop-IME-0.2.16.apk","notes",false)
     @Before fun setup() {
         prefs.edit().clear().commit()
         val own=shadowOf(c.packageManager).getInternalMutablePackageInfo(c.packageName)
@@ -44,6 +44,15 @@ class AppUpdatesTest {
         assertTrue(job.isPersisted);assertEquals(24*60*60*1000L,job.intervalMillis)
         prefs.edit().putBoolean("automatic",false).commit();AppUpdates.schedule(c)
         assertNull(scheduler.getPendingJob(AppUpdates.PERIODIC_JOB))
+    }
+    @Test fun stableChannelIgnoresOldPreviewPreferenceAndDiscardsCachedPreview() {
+        prefs.edit().putBoolean("previews",true).putString("release",release().copy(prerelease=true).json()).putBoolean("ready",true).commit()
+        assertFalse(AppUpdates.previews(c))
+        val file=File(c.filesDir,"updates/verified.apk").apply { parentFile!!.mkdirs();writeText("good") }
+        AppUpdates.reconcile(c)
+        assertNull(AppUpdates.available(c));assertFalse(file.exists());assertFalse(AppUpdates.ready(c))
+        AppUpdates.enqueue(c,release().copy(prerelease=true),false)
+        assertEquals(-1L,prefs.getLong("download_id",-1))
     }
     @Test fun automaticDownloadUsesWifiAndDoesNotDuplicateTask() {
         val r=release();prefs.edit().putString("release",r.json()).commit()

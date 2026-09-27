@@ -25,7 +25,7 @@ object AppUpdates {
     private fun store(c: Context)=c.getSharedPreferences("loop-updates",Context.MODE_PRIVATE)
     fun enabled(c: Context)=store(c).getBoolean("automatic",true)
     fun autoDownload(c: Context)=store(c).getBoolean("download",true)
-    fun previews(c: Context)=store(c).getBoolean("previews",installed(c).versionName.orEmpty().contains('-'))
+    fun previews(c: Context)=false // 0.2+ follows stable releases, including upgraded Alpha installs.
     private fun installed(c: Context)=c.packageManager.getPackageInfo(c.packageName,PackageManager.GET_SIGNING_CERTIFICATES)
     fun current(c: Context)=installed(c).versionName.orEmpty()
     fun available(c: Context)=runCatching { UpdateRelease.restore(store(c).getString("release","").orEmpty()) }.getOrNull()
@@ -117,6 +117,7 @@ object AppUpdates {
         store(c).edit().remove("release").putBoolean("ready",false).apply()
     }
     internal fun enqueue(c: Context,r: UpdateRelease,cellular: Boolean) {
+        if(r.prerelease)return
         if(r.code<=installed(c).longVersionCode || ready(c))return
         if(store(c).getLong("download_id",-1)>=0) {
             if(!cellular)return
@@ -140,6 +141,7 @@ object AppUpdates {
     }
     internal fun reconcile(c: Context) {
         val r=available(c) ?: return
+        if(r.prerelease) { clear(c);status(c,"已切换为正式版更新通道，请检查新版");return }
         if(r.code<=installed(c).longVersionCode) { clear(c);status(c,"已安装最新下载的版本 ${r.version}");return }
         val id=store(c).getLong("download_id",-1)
         if(id<0)return
@@ -180,6 +182,7 @@ object AppUpdates {
         }
     }
     internal fun verifyApk(c: Context,file: File,r: UpdateRelease) {
+        require(!r.prerelease) { "当前仅接收正式版更新" }
         UpdateRelease.verify(file,r)
         val archive=c.packageManager.getPackageArchiveInfo(file.path,PackageManager.GET_SIGNING_CERTIFICATES)
             ?: throw IOException("无法识别安装包")
