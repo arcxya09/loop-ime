@@ -14,8 +14,8 @@ data class RimeState(val raw: String="", val preedit: String="", val commit: Str
     fun keyboardComposition(nine: Boolean): String {
         if(raw.isEmpty())return ""
         val input=preedit.ifBlank { raw }
-        // A phone code is ambiguous: show Rime's first-candidate reading alongside the actual code.
-        return if(nine && reading.isNotBlank())"$reading · $input" else input
+        // Never present ambiguous phone codes as pinyin. Wait for an engine reading if unavailable.
+        return if(nine)reading.filterNot { it.isDigit() }.trim() else input
     }
     fun editorComposition(nine: Boolean)=if(nine || raw.isEmpty())"" else preedit.ifBlank { raw }
     fun editorCommit(nine: Boolean)=if(nine && commit.matches(Regex("[0-9' ]+")))"" else commit

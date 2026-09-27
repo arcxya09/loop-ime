@@ -64,6 +64,61 @@ class KeyboardInteractionTest {
         touch(s,MotionEvent.ACTION_DOWN);touch(s,MotionEvent.ACTION_UP);waitHold()
         assertEquals(listOf("space"),events)
     }
+    @Test fun longPressDigitsAndEnglishAlternatesInsertOnceWithoutTheNormalKey()=withKeyboard { k,events ->
+        for(n in 0..9) {
+            val tag=when(n) { 0->"numbers";1->"punctuation";else->"t9:$n" }
+            val v=k.findViewWithTag<View>(tag);events.clear()
+            touch(v,MotionEvent.ACTION_DOWN);waitHold();touch(v,MotionEvent.ACTION_UP)
+            assertEquals(listOf("literal:$n"),events)
+        }
+        k.setMode(false);measure(k)
+        val letters="qwertyuiopasdfghjklzxcvbnm";val extras="1234567890@#$%&*()-!\"':;?/"
+        letters.forEachIndexed { i,c ->
+            val v=k.findViewWithTag<View>(c.toString());events.clear()
+            touch(v,MotionEvent.ACTION_DOWN);touch(v,MotionEvent.ACTION_UP);waitHold();assertEquals(listOf(c.toString()),events)
+            events.clear();touch(v,MotionEvent.ACTION_DOWN);waitHold();touch(v,MotionEvent.ACTION_UP);waitHold()
+            assertEquals(listOf("literal:${extras[i]}"),events)
+        }
+        events.clear();k.findViewWithTag<View>("shift").performClick();measure(k)
+        k.findViewWithTag<View>("Q").performLongClick();assertEquals(listOf("literal:1"),events)
+    }
+    @Test fun alternateGesturesCancelOnMovementMultitouchAndDetach()=withKeyboard { k,events ->
+        val v=k.findViewWithTag<View>("t9:2")
+        for(cancel in listOf(MotionEvent.ACTION_CANCEL,MotionEvent.ACTION_POINTER_DOWN)) {
+            touch(v,MotionEvent.ACTION_DOWN);touch(v,cancel);waitHold();touch(v,MotionEvent.ACTION_UP)
+        }
+        touch(v,MotionEvent.ACTION_DOWN);touch(v,MotionEvent.ACTION_MOVE,-1000f);waitHold();touch(v,MotionEvent.ACTION_UP)
+        touch(v,MotionEvent.ACTION_DOWN);k.setMode(false);waitHold();touch(v,MotionEvent.ACTION_UP)
+        assertTrue(events.isEmpty())
+    }
+    @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers="zh-rCN-w360dp-h800dp-xxhdpi")
+    fun allLayoutsShareExactKeyBoundsAndEnglishSwitchFollowsPeriod()=withKeyboard { k,_ ->
+        fun bounds(tag: String): Rect {
+            val v=k.findViewWithTag<View>(tag);return Rect(0,0,v.width,v.height).also { k.offsetDescendantRectToMyCoords(v,it) }
+        }
+        for(preset in KeyboardHeight.entries) {
+            k.setHeightPreset(preset);k.setMode(true);measure(k)
+            val height=k.height;val top=bounds("t9:2").top;val bottom=bounds("space").bottom
+            for(sym in listOf(false,true)) {
+                k.setMode(false,sym);measure(k)
+                assertEquals(height,k.height);assertEquals(top,bounds(if(sym)"1" else "q").top);assertEquals(bottom,bounds("space").bottom)
+                assertTrue(bounds("language").left>=bounds("period").right)
+            }
+        }
+        k.setHeightPreset(KeyboardHeight.HIGH);k.setMode(false);measure(k);preview(k,"keyboard-alpha21-english")
+        k.setMode(true);k.composition("ni hao");k.setCandidates(listOf("你好" to {},"你们" to {},"您好" to {},"你好呀" to {},"拟好" to {}));measure(k)
+        val toolbar=k.findViewWithTag<ViewGroup>("keyboard_toolbar");val strip=k.findViewWithTag<View>("candidate_strip")
+        assertEquals(toolbar.width,strip.width);assertEquals(0,strip.left)
+        for(i in 0 until toolbar.childCount)if(toolbar.getChildAt(i)!==strip)assertEquals(View.GONE,toolbar.getChildAt(i).visibility)
+        preview(k,"keyboard-alpha21-full-width-candidates")
+        val candidate=all(strip).filterIsInstance<TextView>().single { it.text=="你好" }
+        candidate.performLongClick()
+        val menu=org.robolectric.shadows.ShadowPopupMenu.getLatestPopupMenu()
+        assertNotNull(menu);assertTrue((0 until menu.menu.size()).any { menu.menu.getItem(it).title=="展开候选" })
+        menu.dismiss();k.endComposition();k.setCandidates(emptyList());measure(k)
+        assertTrue(k.findViewWithTag<View>("tools").isShown);assertTrue(strip.width<toolbar.width)
+    }
     @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
     @Config(qualifiers="zh-rCN-w360dp-h800dp-xxhdpi")
     fun composingToolbarShowsPinyinAndWordsAtTheSameTotalHeight()=withKeyboard { k,_ ->

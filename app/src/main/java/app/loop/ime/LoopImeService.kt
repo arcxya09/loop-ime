@@ -194,7 +194,7 @@ class LoopImeService : InputMethodService() {
             if(state.raw.isNotEmpty())rimeEvent(0,2,change) else change()
             return
         }
-        if(key=="language") { val action={ symbolsMode=false;chinese=!chinese;keyboard.setMode(chinese,symbolsMode);done() };if(state.raw.isNotEmpty())commitRime(action) else action();return }
+        if(key=="language") { val action={ cancelAi();latestText="";symbolsMode=false;chinese=!chinese;keyboard.setMode(chinese,symbolsMode);renderCandidates();done() };if(state.raw.isNotEmpty())commitRime(action) else action();return }
         if(key=="layout") {
             val action={
                 nineKey=!nineKey;if(LoopApp.unlocked(this))prefs.set("chinese_t9",nineKey)
@@ -204,6 +204,13 @@ class LoopImeService : InputMethodService() {
             if(state.raw.isNotEmpty())commitRime(action) else action();return
         }
         if(key=="separator") { if(state.raw.isNotEmpty() && rime.ready)rimeEvent('\''.code,0,done) else done();return }
+        if(key.startsWith("literal:")) {
+            val literal=key.substringAfter(':')
+            if(literal.length!=1 || literal[0].isISOControl()) { done();return }
+            val insert={ commit(literal);renderCandidates();done() }
+            if(state.raw.isNotEmpty())commitRime(insert) else insert()
+            return
+        }
         if(key.startsWith("t9:")) {
             val digit=key.substringAfter(':').singleOrNull()
             if(chinese && nineKey && !symbolsMode && digit!=null && digit in '2'..'9') {
@@ -234,7 +241,7 @@ class LoopImeService : InputMethodService() {
         if(key=="delete") {
             cancelAi();undo=null
             if(state.raw.isNotEmpty())rimeEvent(0xff08,0,done)
-            else { if(editor.delete())recordEdit("manual");latestText="";done() };return
+            else { if(editor.delete())recordEdit("manual");latestText="";renderCandidates();done() };return
         }
         if(key=="space" && state.raw.isNotEmpty()) { chooseFirst(done);return }
         if(key=="enter" && state.raw.isNotEmpty()) { commitRime(done);return }
@@ -271,6 +278,7 @@ class LoopImeService : InputMethodService() {
     private fun commit(text: String,source: String="manual"): Boolean {
         cancelAi();val ok=editor.commit(text);if(ok)record(text,source)
         else keyboard.status("输入框暂未接收文字，请重试")
+        renderCandidates()
         return ok
     }
     private fun recordEdit(source: String) {
@@ -285,6 +293,7 @@ class LoopImeService : InputMethodService() {
         recentWrites.add(text.length to latestTime)
         while(recentWrites.isNotEmpty() && (latestTime-recentWrites.first.second>3000 || recentWrites.size>120))recentWrites.removeFirst()
         scheduleAi()
+        refreshTerms()
     }
     private fun flushDraft() {
         history.separate()
@@ -297,9 +306,11 @@ class LoopImeService : InputMethodService() {
     private fun refreshTerms() {
         personalHasMore=false
         if(!LoopApp.unlocked(this) || restricted || prefs.privateMode) { personal=emptyList();renderCandidates();return }
-        val epoch=fieldEpoch;val raw=state.raw;val nine=nineKey
-        LoopApp.background(this,{ val list=PersonalStore.get(this).terms(raw.replace("'",""),65,nineKey=nine)
-            LoopApp.main.post { if(epoch==fieldEpoch && state.raw==raw && nine==nineKey && !restricted && !prefs.privateMode) { personal=list.take(64);personalHasMore=list.size>64;renderCandidates() } }
+        val epoch=fieldEpoch;val raw=state.raw;val nine=nineKey;val context=latestText
+        if(raw.isEmpty() && context.isBlank()) { personal=emptyList();renderCandidates();return }
+        LoopApp.background(this,{ val store=PersonalStore.get(this)
+            val list=if(raw.isEmpty())store.continuationTerms(context) else store.terms(raw.replace("'",""),65,nineKey=nine)
+            LoopApp.main.post { if(epoch==fieldEpoch && state.raw==raw && context==latestText && nine==nineKey && !restricted && !prefs.privateMode) { personal=list.take(64);personalHasMore=raw.isNotEmpty() && list.size>64;renderCandidates() } }
         })
     }
     private fun loadMorePersonal(done: ()->Unit) {
@@ -338,7 +349,7 @@ class LoopImeService : InputMethodService() {
         val list=mutableListOf<Pair<String,()->Unit>>()
         val cloud=mutableListOf<Pair<String,()->Unit>>()
         val revision=candidateRevision
-        if(state.raw.isNotEmpty()) {
+        if(state.raw.isNotEmpty() && !symbolsMode) {
             val matches=if(state.selStart==0 && state.caret==state.raw.length)personal.filter { NineKey.matchesPrefix(it.pinyin,state.raw,nineKey) } else emptyList()
             fun addPersonal(t: Term) { list+=(t.text to { if(revision==candidateRevision)enqueue("personal:${t.text}") }) }
             matches.filter { NineKey.matches(it.pinyin,state.raw,nineKey) }.forEach(::addPersonal)
@@ -352,11 +363,23 @@ class LoopImeService : InputMethodService() {
             keyboard.composition(state.keyboardComposition(nineKey))
         } else {
             keyboard.endComposition()
-            correctionSuggestion?.let { text -> cloud+=("改为 $text" to { acceptCorrection(text) }) }
-            suggestions.forEach { text -> cloud+=(text to { if(!busy && !voice && state.raw.isEmpty() && text in suggestions) { commit(text,"prediction");suggestions=emptyList();renderCandidates() } }) }
-            if(!restricted && !prefs.privateMode)personal.forEach { t -> list+=(t.text to { if(!busy && !voice && state.raw.isEmpty()) { if(!t.cloud)cloudBlocked=true;if(commit(t.text,"choice"))learnChoice(t.text,t.pinyin) } }) }
+            if(!symbolsMode && !restricted && !prefs.privateMode && latestText.isNotBlank()) {
+                val context=latestText;val editorRevision=editor.revision
+                correctionSuggestion?.let { text -> cloud+=("改为 $text" to { acceptCorrection(text) }) }
+                suggestions.forEach { text -> cloud+=(text.trim() to {
+                    if(!busy && !voice && state.raw.isEmpty() && context==latestText && editorRevision==editor.revision && text in suggestions)commit(text,"prediction")
+                }) }
+                if(prefs.flag("predict",true))personal.forEach { t ->
+                    PredictionText.localSuffix(context,t.text)?.let { suffix -> list+=(suffix.trim() to {
+                        if(!busy && !voice && state.raw.isEmpty() && context==latestText && editorRevision==editor.revision) {
+                            if(!t.cloud)cloudBlocked=true
+                            commit(suffix,"prediction")
+                        }
+                    }) }
+                }
+            }
         }
-        keyboard.candidatePaging((state.raw.isNotEmpty() && state.hasMore) || personalHasMore)
+        keyboard.candidatePaging(!symbolsMode && state.raw.isNotEmpty() && (state.hasMore || personalHasMore))
         keyboard.setCandidates(list.distinctBy { it.first })
         keyboard.setPredictions(cloud)
     }
@@ -382,7 +405,6 @@ class LoopImeService : InputMethodService() {
         call=completeText(text,personal.filter { it.cloud }.map { it.text }) { result ->
             if(!visible || symbolsMode || !prefs.cloud || version!=aiVersion || revision!=editor.revision || generation!=editor.generation || state.raw.isNotEmpty())return@completeText
             result.onSuccess { answer ->
-                if(prefs.flag("predict",true))suggestions=answer.predictions
                 val now=SystemClock.uptimeMillis()
                 val editable=recentWrites.filter { now-it.second<=3000 }.sumOf { it.first }.coerceAtMost(40)
                 val inRecentTail=editable>0 && answer.corrected.startsWith(text.dropLast(editable.coerceAtMost(text.length)))
@@ -391,6 +413,7 @@ class LoopImeService : InputMethodService() {
                         undo=Triple(text,answer.corrected,editor.revision);updateRecordedCorrection(text,answer.corrected);latestText=answer.corrected;recentWrites.clear();keyboard.status("AI 已纠错 · 点击撤销",::applyUndo)
                     } else correctionSuggestion=answer.corrected
                 } else if(prefs.correctionMode!=CorrectionMode.OFF && answer.corrected!=text && answer.corrected.length in 1..200)correctionSuggestion=answer.corrected
+                if(prefs.flag("predict",true))suggestions=PredictionText.continuations(latestText,answer.predictions)
                 renderCandidates()
             }.onFailure { keyboard.aiStatus("AI："+AiProtocol.failure(it).take(80)) }
         }
