@@ -36,6 +36,11 @@ class FrostInstrumentation : Instrumentation() {
                     val code=if(nine)NineKey.encode(pinyin) else pinyin
                     var state=RimeState()
                     for(key in code)state=event(key.code)
+                    if(nine) {
+                        check(state.reading.isNotBlank()) { "Missing native candidate reading for $code" }
+                        check(NineKey.encode(state.reading)==code) { "Reading/code mismatch: ${state.reading} / $code" }
+                        check(state.keyboardComposition(true).contains(state.reading))
+                    } else check(state.keyboardComposition(false)==state.preedit)
                     check(word in state.candidates) { "Missing $word for $code: ${state.candidates}" }
                     check(event(state.candidates.indexOf(word),1).commit==word)
                     report.append("PASS ${if(nine)"T9" else "QWERTY"} $code -> $word\n")

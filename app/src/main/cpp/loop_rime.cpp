@@ -26,16 +26,17 @@ static jbyteArray state(JNIEnv* e) {
     api->free_context(&x);
   }
   out+=",\"candidates\":[";RimeCandidateListIterator it{};bool first=true;
-  bool more=false;
+  bool more=false;std::string reading;
   if(api->candidate_list_begin(sid,&it)){
     size_t n=0;
     while(api->candidate_list_next(&it)){
       if(n++>=candidateLimit){more=true;break;}
+      if(first && it.candidate.comment)reading=it.candidate.comment;
       if(!first)out+=',';first=false;out+=quote(it.candidate.text);
     }
     api->candidate_list_end(&it);
   }
-  return bytes(e,out+"],\"hasMore\":"+(more ? "true" : "false")+"}");
+  return bytes(e,out+"],\"reading\":"+quote(reading.c_str())+",\"hasMore\":"+(more ? "true" : "false")+"}");
 }
 extern "C" JNIEXPORT jboolean JNICALL Java_app_loop_ime_RimeNative_init(JNIEnv* e,jobject,jstring shared,jstring user) {
   if(sid)return true;

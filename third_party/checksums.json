@@ -1,7 +1,7 @@
 {
   "app/src/main/jniLibs/x86_64/librime_jni.so": "98869ae0866f4f5ea452f76cfaa0889b98bf9b11ac33a62d0534d43c14cb9128",
-  "app/src/main/jniLibs/x86_64/libloop_rime.so": "0bfcdbe0c72637dcff7b6c2dd88349cfaddd241bcf896cc7d45d4721bafc035b",
+  "app/src/main/jniLibs/x86_64/libloop_rime.so": "c151a142690f3949999f5c22cee478617c25a92fdbb96ddf027fe2b3bdab3dc1",
   "app/src/main/jniLibs/arm64-v8a/librime_jni.so": "6e2543f874f247016d791c91ab82e53979157f217be80efc472c9537afaff75f",
-  "app/src/main/jniLibs/arm64-v8a/libloop_rime.so": "926df3c989b7ffe64a3d06ac88c964bcfa6a04bb24866078cd8313851368e9e6",
+  "app/src/main/jniLibs/arm64-v8a/libloop_rime.so": "d06cc75897b1ce713553833132fa0d26863e9bb0913dab6b78af17cd7649432c",
   "app/libs/sherpa-onnx-1.13.8.aar": "633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96"
 }

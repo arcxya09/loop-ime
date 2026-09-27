@@ -349,7 +349,7 @@ class LoopImeService : InputMethodService() {
             nineAi.candidates.forEachIndexed { index,candidate ->
                 cloud+=candidate.text to { enqueue("t9cand:$index:$aiRevision:$revision") }
             }
-            keyboard.composition(state.preedit.ifBlank { state.raw })
+            keyboard.composition(state.keyboardComposition(nineKey))
         } else {
             keyboard.endComposition()
             correctionSuggestion?.let { text -> cloud+=("改为 $text" to { acceptCorrection(text) }) }

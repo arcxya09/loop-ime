@@ -66,16 +66,18 @@ class KeyboardInteractionTest {
     }
     @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
     @Config(qualifiers="zh-rCN-w360dp-h800dp-xxhdpi")
-    fun composingToolbarShowsWordsWithoutCodeAndKeepsItsSingleRow()=withKeyboard { k,_ ->
+    fun composingToolbarShowsPinyinAndWordsAtTheSameTotalHeight()=withKeyboard { k,_ ->
         val before=k.height
-        k.composition("64426");k.setCandidates(listOf("你" to {},"你好" to {},"你好呀" to {},"拟好" to {}),setOf("你好","你好呀"));measure(k)
+        k.composition("ni hao · 64 426");k.setCandidates(listOf("你" to {},"你好" to {},"你好呀" to {},"拟好" to {}),setOf("你好","你好呀"));measure(k)
         val strip=all(k).single { it.tag=="candidate_strip" }
         val shown=all(strip).filterIsInstance<TextView>().filter { it.isShown }.map { it.text.toString() }
-        assertEquals(listOf("你","你好","你好呀","拟好"),shown)
+        assertEquals(listOf("ni hao · 64 426","你","你好","你好呀","拟好"),shown)
         assertEquals(before,k.height);assertEquals(44*3,strip.height)
-        preview(k,"keyboard-alpha10-ai-candidates")
+        preview(k,"keyboard-alpha19-pinyin-candidates")
         k.setCandidates(emptyList());measure(k)
-        assertFalse(all(strip).filterIsInstance<TextView>().any { it.text.contains("64426") })
+        assertTrue(k.findViewWithTag<View>("keyboard_preedit").isShown)
+        k.endComposition();measure(k)
+        assertFalse(k.findViewWithTag<View>("keyboard_preedit").isShown);assertEquals(before,k.height)
     }
     @Test fun lateAiUpdateDoesNotMoveTheWordUnderAnActiveFinger()=withKeyboard { k,_ ->
         val clicked=mutableListOf<String>()
