@@ -68,12 +68,15 @@ class LoopImeService : InputMethodService() {
     private var transientField=false
     private val quickClips=SuggestionBuffer()
     private val clipExpiry=Runnable { quickClips.values() }
-    private val otpChanged: ()->Unit = { if(visible && ::keyboard.isInitialized) { if(activePanel=="quick")showPanel("quick") else renderCandidates() } }
-    private val suggestionExpiry=object: Runnable { override fun run() { if(visible) { renderCandidates();LoopApp.main.postDelayed(this,15000) } } }
+    private var shownQuickIds=emptyList<String>()
+    private val otpChanged: ()->Unit = { if(visible && ::keyboard.isInitialized) {
+        if(activePanel=="quick") { if(availableQuick().map { it.id }!=shownQuickIds)showPanel("quick") } else renderCandidates()
+    } }
+    private val suggestionExpiry=object: Runnable { override fun run() { if(visible) { otpChanged();LoopApp.main.postDelayed(this,15000) } } }
     private val voiceQueue=ArrayDeque<Segment>()
     private data class Segment(val raw: String, var text: String, var ready: Boolean=false, var call: AiCall?=null)
     private val screen=object: BroadcastReceiver() { override fun onReceive(c: Context,i: Intent) { if(i.action==Intent.ACTION_SCREEN_OFF) { visible=false;LoopApp.keyboardVisible=false;quickClips.clear();OtpInbox.clear();stopForNavigation() } } }
-    private val clipboardListener=ClipboardManager.OnPrimaryClipChangedListener { if(visible && !restricted && ::prefs.isInitialized && !prefs.privateMode) { captureClip();renderCandidates() } }
+    private val clipboardListener=ClipboardManager.OnPrimaryClipChangedListener { if(visible && !restricted && ::prefs.isInitialized && !prefs.privateMode) { captureClip();otpChanged() } }
 
     override fun onCreate() {
         setTheme(R.style.LoopImeTheme)
@@ -672,8 +675,8 @@ class LoopImeService : InputMethodService() {
             "edit" -> keyboard.actionPanel("文本编辑",listOf(act("← 光标","left"),act("光标 →","right"),act("全选","select_all"),act("复制","copy",!private),act("剪切","cut",!private),act("粘贴","paste",!private),act("撤销输入","undo_edit",editor.canUndo),act("撤销 AI","undo",undo!=null),act("常用短语","phrases",!private)))
             "emoji","punctuation" -> { val marks=if(kind=="emoji")listOf("😀","😄","😊","😂","🥰","👍","🙌","🎉","❤️","✨","🌿","🙏","，","。","？","！","、","：","；","……","“","”") else listOf("，","。","？","！","、","：","；","……","“","”","（","）","《","》","—","·")
                 keyboard.actionPanel(if(kind=="emoji")"表情与符号" else "常用标点",marks.map { act(it,"symbol:$it") },6) }
-            "quick" -> { captureClip();val epoch=fieldEpoch
-                keyboard.cards("快捷建议",availableQuick().map { item -> PanelCard("${item.label} · ${item.source} · ${((System.currentTimeMillis()-item.time)/1000).coerceAtLeast(0)} 秒前",item.text,{ if(epoch==fieldEpoch)enqueue("quick:${item.id}") }) },if(private)"隐私字段不自动读取消息或剪贴板" else "暂无新建议；可复制短信后提取验证码",extra=listOf(act("验证码与快捷建议设置","quick_settings"))) }
+            "quick" -> { captureClip();val epoch=fieldEpoch;val items=availableQuick();shownQuickIds=items.map { it.id }
+                keyboard.cards("快捷建议",items.map { item -> PanelCard("${item.label} · ${item.source} · ${((System.currentTimeMillis()-item.time)/1000).coerceAtLeast(0)} 秒前",item.text,{ if(epoch==fieldEpoch)enqueue("quick:${item.id}") }) },if(private)"隐私字段不自动读取消息或剪贴板" else "暂无新建议；可复制短信后提取验证码",extra=listOf(act("验证码与快捷建议设置","quick_settings"))) }
             else -> {
                 if(private) { keyboard.cards("隐私保护",emptyList(),"当前输入框不读取记忆、短语或剪贴板");return }
                 val epoch=fieldEpoch;val revision=panelRevision

@@ -50,6 +50,19 @@ class NineKeyImeTest {
         f.press("quick:$id");f.press("下文");f.drain();assertEquals("001234下文",f.text.toString());assertTrue(writes.isEmpty())
         ReflectionHelpers.setField(f.service,"restricted",true)
     }
+    @Test fun quickPanelKeepsPreviewViewsUntilSuggestionsActuallyChange()=Fixture().use { f ->
+        ReflectionHelpers.setField(f.service,"restricted",false)
+        val clips=ReflectionHelpers.getField<SuggestionBuffer>(f.service,"quickClips")
+        clips.offer("refresh-test","验证码 001234","测试来源",System.currentTimeMillis())
+        f.press("quick");f.drain()
+        val preview=all(f.keyboard).filterIsInstance<TextView>().single { it.text=="001234" }
+        ReflectionHelpers.getField<Runnable>(f.service,"suggestionExpiry").run()
+        assertSame(preview,all(f.keyboard).filterIsInstance<TextView>().single { it.text=="001234" })
+        clips.consume(clips.values().single().id)
+        ReflectionHelpers.getField<Runnable>(f.service,"suggestionExpiry").run()
+        assertFalse(all(f.keyboard).filterIsInstance<TextView>().any { it.text=="001234" })
+        ReflectionHelpers.setField(f.service,"restricted",true)
+    }
     @Test fun contextualFirstCandidateIsSharedByDisplaySpaceAndEnterWithoutDoubleCountingJournal()=Fixture().use { f ->
         val history=InputHistory {};ReflectionHelpers.setField(f.service,"history",history)
         ReflectionHelpers.setField(f.service,"restricted",false);Prefs(f.service).set("learning",true)
