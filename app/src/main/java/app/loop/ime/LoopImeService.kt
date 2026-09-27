@@ -222,18 +222,20 @@ class LoopImeService : InputMethodService() {
             if(chosen>=0 && parts.getOrNull(2)?.toLongOrNull()==candidateRevision)rimeEvent(chosen,1,done) else done();return }
         if(key.startsWith("personal:")) {
             val text=key.substringAfter(':')
-            if(state.raw.isNotEmpty() && personal.any { it.text==text && NineKey.matchesPrefix(it.pinyin,state.raw,nineKey) } && state.selStart==0 && state.caret==state.raw.length) {
-                val pinyin=personal.first { it.text==text }.pinyin
-                if(personal.any { it.text==text && !it.cloud })cloudBlocked=true
-                rimeEvent(0,2) { if(editor.commit(text)) { record(text,"choice");learnChoice(text,pinyin) } else keyboard.status("输入框未接收词条，请重新选择");done() }
+            val term=personalCandidates().firstOrNull { it.text==text }
+            val inputCode=CandidateRanking.inputCode(state.raw,nineKey)
+            if(state.raw.isNotEmpty() && term!=null) {
+                if(!term.cloud)cloudBlocked=true
+                rimeEvent(0,2) { if(editor.commit(text)) { record(text,"choice");learnChoice(text,term.pinyin,inputCode) } else keyboard.status("输入框未接收词条，请重新选择");done() }
             } else done();return
         }
         if(key.startsWith("t9cand:")) {
             val parts=key.split(':')
             val choice=if(parts.getOrNull(3)?.toLongOrNull()==candidateRevision)
                 nineAi.choose(parts.getOrNull(1)?.toIntOrNull() ?: -1,parts.getOrNull(2)?.toLongOrNull() ?: -1) else null
+            val inputCode=CandidateRanking.inputCode(state.raw,nineKey)
             if(choice!=null)rimeEvent(0,2) {
-                if(editor.commit(choice.text)) { record(choice.text,"choice");learnChoice(choice.text,choice.pinyin) }
+                if(editor.commit(choice.text)) { record(choice.text,"choice");learnChoice(choice.text,choice.pinyin,inputCode) }
                 renderCandidates();done()
             } else done()
             return
@@ -257,13 +259,16 @@ class LoopImeService : InputMethodService() {
     }
     private fun rimeEvent(key: Int,kind: Int,done: ()->Unit) {
         nineAi.cancel()
-        val epoch=fieldEpoch
+        val epoch=fieldEpoch;val previous=state;val inputCode=CandidateRanking.inputCode(previous.raw,nineKey)
         rime.event(key,kind) { next ->
             if(epoch!=fieldEpoch)return@event
             if(next.error!=null) { state=RimeState();candidateRevision++;keyboard.status(next.error);done();return@event }
             state=next;candidateRevision++
             val committed=next.editorCommit(chinese && nineKey)
-            if(committed.isNotEmpty() && editor.commit(committed)) { record(committed,if(kind==1 || kind==3)"choice" else "manual");if(kind==1 || kind==3)learnChoice(committed) }
+            if(committed.isNotEmpty() && editor.commit(committed)) {
+                record(committed,if(kind==1 || kind==3)"choice" else "manual")
+                if(kind==1 || kind==3)learnChoice(committed,if(previous.candidates.firstOrNull()==committed)previous.reading else "",if(next.raw.isEmpty())inputCode else "")
+            }
             val composition=next.editorComposition(chinese && nineKey)
             if(composition.isNotEmpty())editor.setComposition(composition,"rime")
             else if(editor.owner=="rime")editor.cancelComposition()
@@ -271,10 +276,13 @@ class LoopImeService : InputMethodService() {
         }
     }
     private fun chooseFirst(done: ()->Unit) {
-        val p=personal.firstOrNull { (NineKey.matches(it.pinyin,state.raw,nineKey) || (state.candidates.isEmpty() && NineKey.matchesPrefix(it.pinyin,state.raw,nineKey))) && state.selStart==0 && state.caret==state.raw.length }
+        val p=personalCandidates().firstOrNull { CandidateRanking.exact(it,state.raw,nineKey) || state.candidates.isEmpty() }
         if(p!=null)handle("personal:${p.text}",done) else if(state.candidates.isNotEmpty())rimeEvent(0,1,done) else commitRime(done)
     }
-    private fun commitRime(done: ()->Unit) { rimeEvent(0,if(chinese && nineKey && state.candidates.isEmpty())2 else 3,done) }
+    private fun commitRime(done: ()->Unit) {
+        val first=personalCandidates().firstOrNull { CandidateRanking.exact(it,state.raw,nineKey) }
+        if(first!=null)handle("personal:${first.text}",done) else rimeEvent(0,if(chinese && nineKey && state.candidates.isEmpty())2 else 3,done)
+    }
     private fun commit(text: String,source: String="manual"): Boolean {
         cancelAi();val ok=editor.commit(text);if(ok)record(text,source)
         else keyboard.status("输入框暂未接收文字，请重试")
@@ -299,9 +307,9 @@ class LoopImeService : InputMethodService() {
         history.separate()
         if(LoopApp.unlocked(this) && ::prefs.isInitialized)LearnJob.schedule(this)
     }
-    private fun learnChoice(text: String,pinyin: String="") {
+    private fun learnChoice(text: String,pinyin: String="",inputCode: String="") {
         if(restricted || prefs.privateMode || !prefs.learning)return
-        history.learn(text,pinyin,prefs.cloud && !cloudBlocked)
+        history.learn(text,pinyin,prefs.cloud && !cloudBlocked,inputCode)
     }
     private fun refreshTerms() {
         personalHasMore=false
@@ -343,6 +351,17 @@ class LoopImeService : InputMethodService() {
             LoopApp.main.post { if(epoch==fieldEpoch && revision==StoreEvents.revision && !restricted && !prefs.privateMode) { speechTerms=words;cloudSpeechTerms=cloudWords;speechTermsRevision=revision } }
         }) // Optional hints: storage failure must never prevent microphone startup.
     }
+    private fun personalCandidates(): List<Term> {
+        if(state.raw.isEmpty() || state.selStart!=0 || state.caret!=state.raw.length)return emptyList()
+        val matches=personal.filter { CandidateRanking.exact(it,state.raw,nineKey) || NineKey.matchesPrefix(it.pinyin,state.raw,nineKey) }.associateBy { it.text }.toMutableMap()
+        if(!restricted && !prefs.privateMode && prefs.learning)history.recentChoices().forEach { choice ->
+            if(choice.inputCode==CandidateRanking.inputCode(state.raw,nineKey) || (choice.pinyin.isNotBlank() && NineKey.matchesPrefix(choice.pinyin.replace(" ",""),state.raw,nineKey))) {
+                val old=matches[choice.text]
+                matches[choice.text]=Term(choice.text,old?.pinyin ?: choice.pinyin.replace(" ",""),maxOf(old?.score ?: 0,choice.count+1),choice.cloud && (old?.cloud ?: true),"choice",maxOf(choice.lastUsed,old?.lastUsed ?: 0),choice.inputCode)
+            }
+        }
+        return CandidateRanking.sort(matches.values.toList())
+    }
     private fun renderCandidates() {
         if(!::keyboard.isInitialized)return
         if(voice)return
@@ -350,11 +369,11 @@ class LoopImeService : InputMethodService() {
         val cloud=mutableListOf<Pair<String,()->Unit>>()
         val revision=candidateRevision
         if(state.raw.isNotEmpty() && !symbolsMode) {
-            val matches=if(state.selStart==0 && state.caret==state.raw.length)personal.filter { NineKey.matchesPrefix(it.pinyin,state.raw,nineKey) } else emptyList()
+            val matches=personalCandidates()
             fun addPersonal(t: Term) { list+=(t.text to { if(revision==candidateRevision)enqueue("personal:${t.text}") }) }
-            matches.filter { NineKey.matches(it.pinyin,state.raw,nineKey) }.forEach(::addPersonal)
+            matches.filter { CandidateRanking.exact(it,state.raw,nineKey) }.forEach(::addPersonal)
             state.candidates.firstOrNull()?.let { text -> list+=(text to { enqueue("cand:0:$revision") }) }
-            matches.filterNot { NineKey.matches(it.pinyin,state.raw,nineKey) }.forEach(::addPersonal)
+            matches.filterNot { CandidateRanking.exact(it,state.raw,nineKey) }.forEach(::addPersonal)
             state.candidates.drop(1).forEachIndexed { index,text -> list+=(text to { enqueue("cand:${index+1}:$revision") }) }
             val aiRevision=nineAi.revision
             nineAi.candidates.forEachIndexed { index,candidate ->

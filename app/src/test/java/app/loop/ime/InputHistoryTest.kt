@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class InputHistoryTest {
+    @Test fun recentChoicesUpdateImmediatelyAndDeletionRemovesThem() {
+        val writes=mutableListOf<DraftSnapshot>();val h=InputHistory(writes::add)
+        h.apply(TextEdit(0,0,"小明"),"choice",false,false);h.learn("小明","xiaoming",false,"9:94266464")
+        val first=h.recentChoices().single()
+        h.apply(TextEdit(2,2,"晓明"),"choice",false,false);h.learn("晓明","xiaoming",false,"9:94266464")
+        assertEquals("晓明",h.recentChoices().first().text);assertTrue(h.recentChoices().first().lastUsed>first.lastUsed)
+        assertEquals(writes.last(),DraftSnapshot.decode(writes.last().encode()))
+        h.apply(TextEdit(0,4,""),"manual",false,false);assertTrue(h.recentChoices().isEmpty())
+    }
     @Test fun repeatedChoicesCountEachSelectionAndDeletionRetractsOnlyRemovedOccurrences() {
         val writes=mutableListOf<DraftSnapshot>();val h=InputHistory(writes::add)
         repeat(3) { h.apply(TextEdit(it*2,it*2,"小明"),"choice",true,false);h.learn("小明","xiaoming",false) }

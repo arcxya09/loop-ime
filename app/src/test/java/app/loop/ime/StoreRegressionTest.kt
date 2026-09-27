@@ -13,6 +13,56 @@ import org.robolectric.annotation.SQLiteMode
 @Config(sdk=[37],application=Application::class)
 @SQLiteMode(SQLiteMode.Mode.NATIVE)
 class StoreRegressionTest {
+    @Test fun chosenInputCodePreservesPolyphonicRankingAcrossReopenAndBackup()=StoreFixture().use { f ->
+        val raw=NineKey.encode("chongqing");val now=System.currentTimeMillis()
+        f.store.applyDraft(DraftSnapshot("polyphonic","重庆","choice",false,true,1,now,listOf(LearnedChoice("重庆","zhongqing",false,1,now,CandidateRanking.inputCode(raw,true)))))
+        assertEquals("重庆",PersonalStore(f.database).terms(raw,nineKey=true).single().text)
+        val rows=mutableListOf<JSONObject>();f.store.exportRows(rows::add)
+        StoreFixture().use { other ->
+            other.store.importRows(rows.asSequence());other.store.importRows(rows.asSequence())
+            val term=other.store.terms(raw,nineKey=true).single()
+            assertEquals("重庆",term.text);assertTrue(CandidateRanking.exact(term,raw,true));assertEquals(2,term.score)
+            other.store.deleteMemory("polyphonic");assertTrue(other.store.terms(raw,nineKey=true).isEmpty())
+        }
+    }
+    @Test fun recentChoiceOutranksFrequencySurvivesReopenAndRetractsWithItsSource()=StoreFixture().use { f ->
+        val now=System.currentTimeMillis();val s=f.store
+        s.applyDraft(DraftSnapshot("frequent","晓明".repeat(8),"choice",false,true,1,now,listOf(LearnedChoice("晓明","xiaoming",false,8,now-10000))))
+        s.applyDraft(DraftSnapshot("recent","小明","choice",false,true,1,now,listOf(LearnedChoice("小明","xiaoming",false,1,now))))
+        for(nine in listOf(false,true))assertEquals("小明",s.terms(if(nine)NineKey.encode("xiaoming") else "xiaoming",nineKey=nine).first().text)
+        assertEquals(9,s.terms("xiaoming").last().score)
+        val reopened=PersonalStore(f.database)
+        assertEquals("小明",reopened.terms("xiaoming").first().text)
+        s.deleteMemory("recent");assertEquals("晓明",s.terms("xiaoming").first().text)
+        assertFalse(f.database.query("PRAGMA foreign_key_check").use { it.moveToFirst() })
+    }
+    @Test fun recencyExpiresAndBackupsDoNotRefreshTheLastUseOrDuplicateFrequency()=StoreFixture().use { f ->
+        val now=System.currentTimeMillis();val s=f.store
+        s.applyDraft(DraftSnapshot("older","晓明".repeat(5),"choice",false,true,1,now,listOf(LearnedChoice("晓明","xiaoming",false,5,now-CandidateRanking.RECENT_WINDOW-2000))))
+        s.applyDraft(DraftSnapshot("newer","小明","choice",false,true,1,now,listOf(LearnedChoice("小明","xiaoming",false,1,now-CandidateRanking.RECENT_WINDOW-1000))))
+        assertEquals("晓明",s.terms("xiaoming").first().text)
+        val rows=mutableListOf<JSONObject>();s.exportRows(rows::add)
+        StoreFixture().use { restored ->
+            restored.store.importRows(rows.asSequence());restored.store.importRows(rows.asSequence())
+            assertEquals(s.terms("xiaoming"),restored.store.terms("xiaoming"))
+            assertEquals(now-CandidateRanking.RECENT_WINDOW-1000,restored.store.terms("xiaoming").last().lastUsed)
+        }
+    }
+    @Test fun singleCharactersAndMemoryDisabledChoicesKeepRetractableRecency()=StoreFixture().use { f ->
+        val now=System.currentTimeMillis();val s=f.store
+        val draft=DraftSnapshot("no-memory","你","choice",false,false,1,now,listOf(LearnedChoice("你","ni",false,1,now)))
+        s.applyDraft(draft);s.applyDraft(draft)
+        assertEquals(0L,s.count("memories"));assertEquals(2,s.terms("ni").single().score);assertEquals(now,s.terms("ni").single().lastUsed)
+        s.applyDraft(draft.copy(text="",revision=2,choices=emptyList()));assertTrue(s.terms("ni").isEmpty())
+        s.forgetTerm("你");s.applyDraft(draft);assertTrue(s.terms("ni").isEmpty())
+    }
+    @Test fun exactPronunciationsStayBeforeRecentlyUsedLongerPhrases()=StoreFixture().use { f ->
+        f.store.addTerm("小明","xiaoming",explicit=true)
+        val now=System.currentTimeMillis()
+        f.store.applyDraft(DraftSnapshot("long","小明同学","choice",false,true,1,now,listOf(LearnedChoice("小明同学","xiaomingtongxue",false,1,now))))
+        assertEquals("小明",f.store.terms("xiaoming").first().text)
+        assertEquals("小明",f.store.terms(NineKey.encode("xiaoming"),nineKey=true).first().text)
+    }
     @Test fun continuationLookupDoesNotFallBackToFrequentWords()=StoreFixture().use { f ->
         f.store.addTerm("好的","haode",explicit=true)
         f.store.addTerm("你好世界","nihaoshijie",explicit=true)
@@ -97,7 +147,7 @@ class StoreRegressionTest {
         db.execSQL("INSERT INTO clips VALUES ('clip','保留剪贴板',100,1)")
         db.version=1
     }.use { f ->
-        assertEquals(3,f.database.version)
+        assertEquals(4,f.database.version)
         assertEquals("联系王小明",f.store.memories().single().text);assertFalse(f.store.memories().single().cloud)
         assertEquals(3,f.store.terms().single().score);assertTrue(f.store.terms(cloudOnly=true).isEmpty())
         assertEquals("保留剪贴板",f.store.clips().single().text)

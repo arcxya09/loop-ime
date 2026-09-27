@@ -5,18 +5,18 @@ import org.json.JSONObject
 import java.util.UUID
 
 data class TextEdit(val start: Int,val end: Int,val text: String)
-data class LearnedChoice(val text: String,val pinyin: String="",val cloud: Boolean=false,val count: Int=1)
+data class LearnedChoice(val text: String,val pinyin: String="",val cloud: Boolean=false,val count: Int=1,val lastUsed: Long=0,val inputCode: String="")
 data class DraftSnapshot(val id: String,val text: String,val source: String,val cloud: Boolean,
     val remember: Boolean,val revision: Long,val time: Long,val choices: List<LearnedChoice> = emptyList()) {
     fun encode(): ByteArray=JSONObject().put("id",id).put("text",text).put("source",source).put("cloud",cloud)
         .put("remember",remember).put("revision",revision).put("time",time).put("choices",JSONArray(choices.map {
-            JSONObject().put("text",it.text).put("pinyin",it.pinyin).put("cloud",it.cloud).put("count",it.count)
+            JSONObject().put("text",it.text).put("pinyin",it.pinyin).put("cloud",it.cloud).put("count",it.count).put("last_used",it.lastUsed).put("input_code",it.inputCode)
         })).toString().toByteArray(Charsets.UTF_8)
     companion object {
         fun decode(bytes: ByteArray): DraftSnapshot {
             val j=JSONObject(bytes.toString(Charsets.UTF_8));val a=j.getJSONArray("choices")
             return DraftSnapshot(j.getString("id"),j.getString("text"),j.getString("source"),j.getBoolean("cloud"),j.getBoolean("remember"),j.getLong("revision"),j.getLong("time"),
-                (0 until a.length()).map { val x=a.getJSONObject(it);LearnedChoice(x.getString("text"),x.getString("pinyin"),x.getBoolean("cloud"),x.optInt("count",1).coerceIn(1,100000)) })
+                (0 until a.length()).map { val x=a.getJSONObject(it);LearnedChoice(x.getString("text"),x.getString("pinyin"),x.getBoolean("cloud"),x.optInt("count",1).coerceIn(1,100000),x.optLong("last_used",0).coerceAtLeast(0),x.optString("input_code","")) })
         }
     }
 }
@@ -26,6 +26,8 @@ internal class InputHistory(private val write: (DraftSnapshot)->Unit) {
     private data class Chunk(var start: Int,var snapshot: DraftSnapshot,var hadChoice: Boolean=false)
     private val chunks=mutableListOf<Chunk>()
     private var active: Chunk?=null
+    private var lastChoiceTime=0L
+    fun recentChoices()=chunks.flatMap { it.snapshot.choices }.sortedByDescending { it.lastUsed }.distinctBy { it.text }
     val lastId get()=active?.snapshot?.id.orEmpty()
     private fun publish(chunk: Chunk,text: String=chunk.snapshot.text) {
         chunk.snapshot=chunk.snapshot.copy(text=text,revision=chunk.snapshot.revision+1,
@@ -71,12 +73,13 @@ internal class InputHistory(private val write: (DraftSnapshot)->Unit) {
             chunks.add(chunk);active=chunk;publish(chunk)
         } else active=null
     }
-    fun learn(text: String,pinyin: String,cloud: Boolean) {
+    fun learn(text: String,pinyin: String,cloud: Boolean,inputCode: String="") {
         val chunk=active ?: return
         if(!chunk.snapshot.text.contains(text))return
         chunk.hadChoice=true
         val old=chunk.snapshot.choices.firstOrNull { it.text==text }
-        val choice=LearnedChoice(text,pinyin.ifBlank { old?.pinyin.orEmpty() },cloud && (old?.cloud ?: true),(old?.count ?: 0)+1)
+        lastChoiceTime=maxOf(System.currentTimeMillis(),lastChoiceTime+1)
+        val choice=LearnedChoice(text,pinyin.ifBlank { old?.pinyin.orEmpty() },cloud && (old?.cloud ?: true),(old?.count ?: 0)+1,lastChoiceTime,inputCode)
         chunk.snapshot=chunk.snapshot.copy(choices=chunk.snapshot.choices.filterNot { it.text==text }+choice)
         publish(chunk)
     }
