@@ -446,6 +446,7 @@ class LoopImeService : InputMethodService() {
             SpeechWire.DONE -> { partial="";stoppingVoice=true;speechDone=true;drainVoice();finishVoiceIfReady() }
             SpeechWire.ERROR,SpeechWire.MODEL_REQUIRED -> {
                 voiceQueue.forEach { it.ready=true;it.call?.cancel() };partial="";drainVoice();cancelVoice(true)
+                if(voiceRecovery.isEmpty())renderCandidates()
                 if(kind==SpeechWire.MODEL_REQUIRED)keyboard.status(text) { enqueue("offline_model_settings") } else keyboard.status(text)
                 prefs.set("speech_last_error",text)
             }

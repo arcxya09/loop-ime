@@ -29,10 +29,10 @@ class CandidatePanelTest {
     }
     @Test fun cloudResultsAndErrorsLeaveLocalWordsVisibleAndInPlace()=fixture { k,_ ->
         k.composition("9264");k.setCandidates(listOf("王" to {},"往" to {},"王小明" to {}));measure(k)
-        val strip=k.findViewWithTag<View>("candidate_strip");val before=words(strip)
+        val strip=k.findViewWithTag<View>("candidate_strip");val before=words(strip);val height=k.height
         k.setPredictions(listOf("王老师" to {}));k.status("AI 候选超时，稍后重试");measure(k)
-        assertEquals(before,words(strip));assertTrue(words(k.findViewWithTag("cloud_predictions")).contains("王老师"))
-        assertEquals(View.VISIBLE,k.findViewWithTag<View>("keyboard_notice").visibility)
+        assertEquals(before,words(strip).take(before.size));assertTrue(words(k.findViewWithTag("cloud_predictions")).contains("王老师"))
+        assertEquals(height,k.height);assertEquals(View.GONE,k.findViewWithTag<View>("keyboard_notice").visibility)
         k.setPredictions(emptyList());assertEquals(before,words(strip))
     }
     @Test fun backgroundAiFailuresNeverResizeOrMoveCandidatesAndKeys()=fixture { k,events ->
@@ -66,6 +66,72 @@ class CandidatePanelTest {
         k.aiStatus("AI：连接失败");measure(k)
         assertEquals(height,k.height)
         k.findViewWithTag<View>("keyboard_status").performClick();assertTrue(undone)
+    }
+    @Test fun allFeedbackAndPredictionsStayInsideTheToolbarAcrossLayoutsAndHeights()=fixture { k,_ ->
+        for(preset in KeyboardHeight.entries)for(nine in listOf(true,false)) {
+            k.setHeightPreset(preset);k.setNineKey(nine);k.setMode(true);measure(k)
+            val height=k.height
+            val body=k.findViewWithTag<View>("keyboard_body")
+            val location=IntArray(2);body.getLocationInWindow(location);val top=location[1]
+            for(message in listOf("语音已结束","正在完成尾句…","识别失败","请下载离线模型","未插入的语音","记忆保存失败","AI 已纠错 · 点击撤销","任意新提示","Network error")) {
+                for(compose in listOf(false,true)) {
+                    if(compose)k.composition("ni hao") else k.endComposition()
+                    k.setCandidates(listOf("个人词" to {}));measure(k)
+                    val scroll=all(k.findViewWithTag("candidate_strip")).filterIsInstance<android.widget.HorizontalScrollView>().single()
+                    val word=all(scroll).filterIsInstance<TextView>().single { it.text=="个人词" }
+                    val before=IntArray(2);word.getLocationInWindow(before)
+                    k.status(message);k.setPredictions(listOf("云端续写" to {}));measure(k)
+                    assertEquals("$preset $nine $message",height,k.height)
+                    body.getLocationInWindow(location);assertEquals(top,location[1])
+                    val after=IntArray(2);all(scroll).filterIsInstance<TextView>().single { it.text=="个人词" }.getLocationInWindow(after)
+                    assertArrayEquals(before,after)
+                    if(compose)assertTrue(k.findViewWithTag<View>("keyboard_preedit").isShown)
+                    k.setCandidates(emptyList());measure(k);assertEquals(height,k.height)
+                    assertTrue(words(k.findViewWithTag("cloud_predictions")).contains("云端续写"))
+                    k.setPredictions(emptyList());measure(k);assertEquals(height,k.height)
+                }
+            }
+            k.panel("未插入的语音",listOf("重试" to {}));measure(k);assertEquals(height,k.height)
+            k.setMode(false);measure(k);assertEquals(height,k.height)
+            k.setMode(false,true);measure(k);assertEquals(height,k.height)
+        }
+    }
+    @Test fun actionableFeedbackSurvivesTypingAndTimersWithoutHidingPinyin()=fixture { k,_ ->
+        var retries=0
+        k.status("处理未插入的语音") { retries++ }
+        k.composition("ni hao");k.setCandidates(listOf("你好" to {}));k.aiStatus("连接失败");measure(k)
+        val height=k.height
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(10))
+        assertTrue(k.findViewWithTag<View>("keyboard_preedit").isShown)
+        assertTrue(k.findViewWithTag<View>("tools").performLongClick());assertEquals(1,retries)
+        k.endComposition();measure(k)
+        assertEquals(height,k.height);assertTrue(k.findViewWithTag<View>("keyboard_notice").isShown)
+        k.findViewWithTag<View>("keyboard_notice").performClick();assertEquals(2,retries)
+        k.status("语音已结束")
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(4))
+        measure(k);assertEquals(height,k.height);assertFalse(k.findViewWithTag<View>("keyboard_notice").isShown)
+    }
+    @Test fun predictionsDeferDuringATapAndClearAcrossVoiceTransitions()=fixture { k,_ ->
+        var chosen=false
+        k.setPredictions(listOf("云端词" to { chosen=true }));measure(k)
+        val scroll=all(k.findViewWithTag("candidate_strip")).filterIsInstance<android.widget.HorizontalScrollView>().single()
+        val word=all(scroll).filterIsInstance<TextView>().single { it.text=="云端词" }
+        val rect=android.graphics.Rect(0,0,word.width,word.height);scroll.offsetDescendantRectToMyCoords(word,rect)
+        fun touch(action: Int) {
+            val time=SystemClock.uptimeMillis();val e=MotionEvent.obtain(time,time,action,rect.centerX().toFloat(),rect.centerY().toFloat(),0)
+            try { scroll.dispatchTouchEvent(e) } finally { e.recycle() }
+        }
+        touch(MotionEvent.ACTION_DOWN);k.setPredictions(listOf("替换词" to {}));k.status("语音已结束");measure(k)
+        assertTrue(word.isAttachedToWindow);touch(MotionEvent.ACTION_UP)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();assertTrue(chosen)
+        assertTrue(words(scroll).contains("替换词"))
+        touch(MotionEvent.ACTION_DOWN);k.setPredictions(listOf("过期词" to {}))
+        k.voice(true);k.voice(false);k.status("语音已结束");k.setCandidates(listOf("个人词" to {}))
+        touch(MotionEvent.ACTION_CANCEL);org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();measure(k)
+        assertFalse(words(scroll).contains("过期词"));assertTrue(words(scroll).contains("个人词"))
+        k.setPredictions(listOf("展开云端" to { chosen=false }));k.findViewWithTag<View>("expand_candidates").performClick();measure(k)
+        all(k.findViewWithTag("expanded_candidates")).filterIsInstance<TextView>().single { it.text=="展开云端" }.performClick()
+        assertFalse(chosen)
     }
     @Test fun committingAndDeletingNeverPromoteTheVoiceHintToANotice()=fixture { k,_ ->
         measure(k);val height=k.height;val top=k.findViewWithTag<View>("keyboard_body").top

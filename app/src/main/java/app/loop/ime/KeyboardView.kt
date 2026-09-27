@@ -24,24 +24,13 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     private val notice=TextView(c)
     private val cloudRow=LinearLayout(c)
     private val cloudCandidates=LinearLayout(c)
-    private var touchingCloud=false
-    private var deferredCloud: List<Pair<String,()->Unit>>?=null
-    private val cloudScroll=object: HorizontalScrollView(c) {
-        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-            if(event.actionMasked==MotionEvent.ACTION_DOWN)touchingCloud=true
-            return try { super.dispatchTouchEvent(event) } finally {
-                if(event.actionMasked==MotionEvent.ACTION_UP || event.actionMasked==MotionEvent.ACTION_CANCEL) {
-                    touchingCloud=false
-                    post { if(!touchingCloud)deferredCloud?.let { deferredCloud=null;setPredictions(it) } }
-                }
-            }
-        }
-    }
+    private var predictionValues=emptyList<Pair<String,()->Unit>>()
+    private var deferredPredictions: List<Pair<String,()->Unit>>?=null
     private lateinit var aiButton: KeyboardIcon
     private lateinit var toolsButton: KeyboardIcon
     private var aiMessage=""
     private val clearAiMessage=Runnable {
-        aiMessage="";toolsButton.tint=ink;toolsButton.contentDescription="Loop 工具与设置";toolsButton.invalidate()
+        aiMessage="";updateToolsHint()
     }
     private val candidates=LinearLayout(c)
     private var touchingCandidates=false
@@ -54,12 +43,12 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             if(event.actionMasked==MotionEvent.ACTION_MOVE && event.y-downY>dp(24) && event.y-downY>kotlin.math.abs(event.x-downX)) {
                 val cancel=MotionEvent.obtain(event).apply { action=MotionEvent.ACTION_CANCEL }
                 try { super.dispatchTouchEvent(cancel) } finally { cancel.recycle() }
-                touchingCandidates=false;setExpanded(true);return true
+                touchingCandidates=false;flushDeferredCandidates();setExpanded(true);return true
             }
             return try { super.dispatchTouchEvent(event) } finally {
                 if(event.actionMasked==MotionEvent.ACTION_UP || event.actionMasked==MotionEvent.ACTION_CANCEL) {
                     touchingCandidates=false
-                    post { if(!touchingCandidates)deferredCandidates?.let { deferredCandidates=null;setCandidates(it.first,it.second) } }
+                    post { flushDeferredCandidates() }
                 }
             }
         }
@@ -73,7 +62,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             return try { super.dispatchTouchEvent(event) } finally {
                 if(event.actionMasked==MotionEvent.ACTION_UP || event.actionMasked==MotionEvent.ACTION_CANCEL) {
                     touchingCandidates=false
-                    post { if(!touchingCandidates)deferredCandidates?.let { deferredCandidates=null;setCandidates(it.first,it.second) } }
+                    post { flushDeferredCandidates() }
                 }
             }
         }
@@ -114,12 +103,12 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         }
         toolsButton=tool("tools","Loop 工具与设置") { key("tools") }
         toolsButton.setOnLongClickListener {
-            if(aiMessage.isEmpty())false else { Toast.makeText(context,aiMessage,Toast.LENGTH_LONG).show();true }
+            if(showNotice) { showStatus();true } else if(aiMessage.isNotEmpty()) { Toast.makeText(context,aiMessage,Toast.LENGTH_LONG).show();true } else false
         }
         val strip=FrameLayout(c).apply { tag="candidate_strip" }
         labelStyle(status,11,9);status.setTextColor(muted);status.gravity=Gravity.CENTER_VERTICAL
         status.setPadding(dp(5),0,dp(5),0);status.tag="keyboard_status"
-        status.setOnClickListener { statusAction?.invoke() ?: Toast.makeText(context,statusText,Toast.LENGTH_LONG).show() }
+        status.setOnClickListener { showStatus() }
         candidates.orientation=HORIZONTAL;candidateScroll.isHorizontalScrollBarEnabled=false
         candidateScroll.addView(candidates,ViewGroup.LayoutParams(-2,-1))
         strip.addView(status,FrameLayout.LayoutParams(-1,-1))
@@ -128,7 +117,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         preedit.ellipsize=TextUtils.TruncateAt.START
         preedit.setOnClickListener { Toast.makeText(context,compositionText,Toast.LENGTH_LONG).show() }
         strip.addView(preedit,FrameLayout.LayoutParams(-1,dp(16),Gravity.TOP))
-        strip.addView(candidateScroll,FrameLayout.LayoutParams(-1,dp(34),Gravity.CENTER_VERTICAL))
+        strip.addView(candidateScroll,FrameLayout.LayoutParams(-1,dp(28),Gravity.BOTTOM))
         toolbar.addView(strip,LayoutParams(0,-1,1f))
         expandButton=tool("expand_candidates","展开全部候选词") { setExpanded(!expanded) }
         separator=action("分词","separator",10,Color.TRANSPARENT).apply { setTextColor(muted);contentDescription="拼音分词" }
@@ -139,20 +128,19 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         tool("hide","收起键盘") { key("hide") }
         addView(toolbar,LayoutParams(-1,dp(44)))
         cloudRow.tag="cloud_predictions";cloudRow.gravity=Gravity.CENTER_VERTICAL;cloudRow.visibility=GONE
-        cloudRow.addView(TextView(c).apply { text="云端";setTextColor(muted);labelStyle(this,11);gravity=Gravity.CENTER },LayoutParams(dp(42),-1))
-        cloudScroll.isHorizontalScrollBarEnabled=false;cloudScroll.addView(cloudCandidates,ViewGroup.LayoutParams(-2,-1))
-        cloudRow.addView(cloudScroll,LayoutParams(0,-1,1f));addView(cloudRow,LayoutParams(-1,dp(36)))
+        cloudRow.addView(TextView(c).apply { text="AI";setTextColor(muted);labelStyle(this,11);gravity=Gravity.CENTER },LayoutParams(dp(28),-1))
+        cloudRow.addView(cloudCandidates,LayoutParams(-2,-1))
         notice.tag="keyboard_notice";notice.setTextColor(muted);labelStyle(notice,11);notice.setPadding(dp(8),0,dp(8),0)
         notice.gravity=Gravity.CENTER_VERTICAL;notice.visibility=GONE
-        notice.setOnClickListener { statusAction?.invoke() ?: Toast.makeText(context,statusText,Toast.LENGTH_LONG).show() }
-        addView(notice,LayoutParams(-1,dp(28)))
+        notice.setOnClickListener { showStatus() }
+        strip.addView(notice,FrameLayout.LayoutParams(-1,dp(16),Gravity.TOP))
         body.orientation=VERTICAL;body.tag="keyboard_body";content.addView(body,FrameLayout.LayoutParams(-1,-2))
         expandedScroll.tag="expanded_candidates";expandedScroll.visibility=GONE;expandedScroll.isFillViewport=true
         expandedScroll.addView(expandedWords,ViewGroup.LayoutParams(-1,-2));content.addView(expandedScroll,FrameLayout.LayoutParams(-1,-1))
         expandedScroll.setOnScrollChangeListener { _,_,y,_,_ ->
             if(expanded && y>0 && expandedWords.height-y-expandedScroll.height<dp(60))requestMore()
         }
-        addView(content,LayoutParams(-1,-2))
+        addView(content,LayoutParams(-1,dp(heightPreset.padDp+4)))
         render();voice(false)
         setOnApplyWindowInsetsListener { _,insets ->
             // Android draws the switcher. This is only its safe area, with no app footer or globe.
@@ -161,7 +149,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         }
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow();requestApplyInsets() }
-    override fun onDetachedFromWindow() { removeCallbacks(clearNotice);removeCallbacks(clearAiMessage);clearAiMessage.run();showNotice=false;super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { removeCallbacks(clearNotice);removeCallbacks(clearAiMessage);showNotice=false;clearAiMessage.run();super.onDetachedFromWindow() }
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if(event.actionMasked==MotionEvent.ACTION_DOWN)discardMultiTouch=false
         if(event.actionMasked==MotionEvent.ACTION_POINTER_DOWN && spaceKey?.tracking==true) { discardMultiTouch=true;cancelSpaceGesture() }
@@ -207,22 +195,15 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         spaceKey=this
     }
     private fun modeName()=if(symbols)"数字 / 符号" else if(!chinese)"英文" else if(nineKey)"九宫格" else "全键盘"
-    private fun isPreedit(s: String)=s.isNotBlank() && s.matches(Regex("[a-zA-Z0-9'üv :·-]+"))
     private fun isIdleHint(s: String)=s.startsWith("简体九宫格 ·") || s.startsWith("简体全键盘 ·") ||
         s.startsWith("简体拼音已就绪") || s=="拼音已就绪" || s=="英文 · 长按空格说话" || s.startsWith("长按空格说话")
     private fun updateStrip() {
-        status.text=if(isIdleHint(statusText) || statusText=="长按空格说话 · 松开结束")modeName() else statusText
+        status.text=if(showNotice)statusText else modeName()
         status.contentDescription=statusText
         val showCandidates=hasCandidates && !isVoice
         val showPreedit=composing && compositionText.isNotBlank() && chinese && !symbols && !isVoice
         preedit.text=compositionText;preedit.contentDescription="拼音：$compositionText"
         preedit.visibility=if(showPreedit)VISIBLE else GONE
-        val candidateHeight=dp(if(showPreedit)28 else 34)
-        val candidateGravity=if(showPreedit)Gravity.BOTTOM else Gravity.CENTER_VERTICAL
-        val candidateParams=candidateScroll.layoutParams as FrameLayout.LayoutParams
-        if(candidateParams.height!=candidateHeight || candidateParams.gravity!=candidateGravity) {
-            candidateParams.height=candidateHeight;candidateParams.gravity=candidateGravity;candidateScroll.layoutParams=candidateParams
-        }
         val statusParams=status.layoutParams as FrameLayout.LayoutParams
         val statusHeight=if(showPreedit)dp(28) else -1
         if(statusParams.height!=statusHeight) { statusParams.height=statusHeight;statusParams.gravity=Gravity.BOTTOM;status.layoutParams=statusParams }
@@ -231,29 +212,35 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         candidateScroll.visibility=if(showCandidates)View.VISIBLE else View.GONE
         expandButton.visibility=if(showCandidates)VISIBLE else GONE
         notice.text=statusText;notice.contentDescription=statusText
-        notice.visibility=if(showNotice && showCandidates)VISIBLE else GONE
+        notice.visibility=if(showNotice && showCandidates && !showPreedit)VISIBLE else GONE
         separator.visibility=if(showCandidates && chinese && !symbols)View.VISIBLE else View.GONE
-        aiButton.visibility=if(showCandidates || isVoice || showNotice)View.GONE else View.VISIBLE
-        clipButton.visibility=if(showCandidates || (showNotice && !isVoice))View.GONE else View.VISIBLE
+        aiButton.visibility=if(showCandidates || isVoice)View.GONE else View.VISIBLE
+        clipButton.visibility=if(showCandidates)View.GONE else View.VISIBLE
+        updateToolsHint()
     }
-    /** Background AI failures must not resize the keyboard or displace a candidate under a finger. */
+    private fun updateToolsHint() {
+        val message=if(showNotice)statusText else aiMessage
+        toolsButton.tint=if(message.isEmpty())ink else 0xffa06520.toInt()
+        toolsButton.contentDescription=if(message.isEmpty())"Loop 工具与设置" else "Loop 工具与设置；$message；长按查看或操作"
+        toolsButton.invalidate()
+    }
+    private fun showStatus() {
+        val action=statusAction
+        if(showNotice && action!=null)action() else Toast.makeText(context,if(showNotice)statusText else modeName(),Toast.LENGTH_LONG).show()
+    }
+    /** All transient feedback stays inside the fixed toolbar, including actionable notices. */
     fun aiStatus(s: String) {
-        aiMessage=s;toolsButton.tint=0xffa06520.toInt()
-        toolsButton.contentDescription="Loop 工具与设置；$s；长按查看"
-        toolsButton.invalidate();removeCallbacks(clearAiMessage);postDelayed(clearAiMessage,8000)
+        aiMessage=s;updateToolsHint();removeCallbacks(clearAiMessage);postDelayed(clearAiMessage,8000)
     }
     fun status(s: String,action: (()->Unit)?=null) {
         statusText=s;statusAction=action;removeCallbacks(clearNotice)
-        // Notices have their own line; candidate selection remains available throughout.
-        showNotice=s.isNotBlank() && !isIdleHint(s) && !isPreedit(s)
-        updateStrip();if(showNotice)postDelayed(clearNotice,3500)
+        showNotice=s.isNotBlank() && !isIdleHint(s)
+        updateStrip();if(showNotice && action==null)postDelayed(clearNotice,3500)
     }
     fun composition(preedit: String) {
-        // Both lines share the existing 44 dp strip, keeping keyboard and key positions stable.
-        composing=preedit.isNotBlank();compositionText=preedit;statusText=preedit
-        statusAction=null;showNotice=false;removeCallbacks(clearNotice);updateStrip()
+        composing=preedit.isNotBlank();compositionText=preedit;updateStrip()
     }
-    fun endComposition() { if(composing) { composing=false;compositionText="";status("长按空格说话 · 松开结束") } }
+    fun endComposition() { composing=false;compositionText="";updateStrip() }
     fun setMode(cn: Boolean,sym: Boolean=false) { composing=false;compositionText="";chinese=cn;symbols=sym;render() }
     fun setNineKey(nine: Boolean) { nineKey=nine;render() }
     fun setHeightPreset(preset: KeyboardHeight) { if(heightPreset!=preset) { heightPreset=preset;render() } }
@@ -268,16 +255,20 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         clipButton.glyph=if(active)"cancel" else "clipboard";clipButton.contentDescription=if(active)"取消语音尾句" else "剪贴板";clipButton.invalidate()
         if(spaceKey?.holding!=true)spaceKey?.text=if(active)"结束语音" else "按住说话"
         spaceKey?.setTextColor(if(active)green else muted)
-        setCandidates(emptyList())
-        setPredictions(emptyList())
+        clearCandidates()
+    }
+    private fun flushDeferredCandidates() {
+        if(touchingCandidates)return
+        deferredCandidates?.let { deferredCandidates=null;setCandidates(it.first,it.second) }
+        deferredPredictions?.let { deferredPredictions=null;setPredictions(it) }
+    }
+    private fun clearCandidates() {
+        touchingCandidates=false;deferredCandidates=null;deferredPredictions=null
+        predictionValues=emptyList();setCandidates(emptyList())
     }
     fun setPredictions(values: List<Pair<String,()->Unit>>) {
-        if(touchingCloud) { deferredCloud=values.toList();return }
-        deferredCloud=null;cloudCandidates.removeAllViews()
-        values.forEach { (text,choose) -> cloudCandidates.addView(button(text,15,Color.TRANSPARENT,choose).apply {
-            setTextColor(green);setPadding(dp(12),0,dp(12),0);contentDescription="$text，AI 候选"
-        },LayoutParams(-2,-1)) }
-        cloudRow.visibility=if(values.isNotEmpty() && !isVoice)VISIBLE else GONE
+        if(touchingCandidates) { deferredPredictions=values.toList();return }
+        deferredPredictions=null;predictionValues=values.toList();renderCandidates()
     }
     fun candidatePaging(more: Boolean,loading: Boolean=false) {
         if(hasMore==more && loadingMore==loading)return
@@ -287,7 +278,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     private fun requestMore() { if(hasMore && !loadingMore) { loadingMore=true;key("more_candidates") } }
     private fun setExpanded(value: Boolean) {
         expanded=value && hasCandidates && !isVoice
-        if(expanded)expandedScroll.layoutParams.height=body.measuredHeight.takeIf { it>0 } ?: dp(heightPreset.padDp+4)
+        if(expanded)expandedScroll.layoutParams.height=dp(heightPreset.padDp+4)
         body.visibility=if(expanded)INVISIBLE else VISIBLE;expandedScroll.visibility=if(expanded)VISIBLE else GONE
         expandButton.glyph=if(expanded)"collapse_candidates" else "expand_candidates";expandButton.invalidate()
         expandButton.contentDescription=if(expanded)"收起候选词" else "展开全部候选词"
@@ -298,6 +289,9 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         candidateValues.forEachIndexed { i,(text,choose) -> expandedWords.addView(button(text,17,if(i==0)mint else Color.TRANSPARENT) {
             setExpanded(false);choose()
         }.apply { setPadding(dp(14),0,dp(14),0);minimumWidth=dp(56);setTextColor(if(text in candidateAiTexts)green else ink) },ViewGroup.LayoutParams(-2,dp(44))) }
+        predictionValues.forEach { (text,choose) -> expandedWords.addView(button(text,17,Color.TRANSPARENT) {
+            setExpanded(false);choose()
+        }.apply { setPadding(dp(14),0,dp(14),0);minimumWidth=dp(56);setTextColor(green);contentDescription="$text，AI 候选" },ViewGroup.LayoutParams(-2,dp(44))) }
         if(hasMore)expandedWords.addView(button(if(loadingMore)"正在加载…" else "更多候选词",13,secondary) { requestMore() },ViewGroup.LayoutParams(-2,dp(44)))
     }
     fun setCandidates(values: List<Pair<String,()->Unit>>,aiTexts: Set<String> = emptySet()) {
@@ -306,22 +300,33 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         deferredCandidates=null
         val previous=candidateValues.map { it.first }
         candidateValues=values.toList();candidateAiTexts=aiTexts.toSet()
-        candidates.removeAllViews();hasCandidates=values.isNotEmpty()
+        renderCandidates()
+        if(previous!=values.map { it.first } && previous!=values.take(previous.size).map { it.first }) {
+            candidateScroll.scrollTo(0,0);expandedScroll.scrollTo(0,0)
+        }
+    }
+    private fun renderCandidates() {
+        val values=candidateValues;val aiTexts=candidateAiTexts
+        candidates.removeAllViews();hasCandidates=values.isNotEmpty() || predictionValues.isNotEmpty()
         values.forEachIndexed { i,(text,choose) ->
             candidates.addView(button(text,16,if(i==0)mint else Color.TRANSPARENT,choose).apply {
                 setTextColor(if(i==0 || text in aiTexts)green else ink);setPadding(dp(12),0,dp(12),0)
                 if(text in aiTexts)contentDescription="$text，AI 候选"
             },LayoutParams(-2,-1).apply { rightMargin=dp(4) })
         }
-        if(previous!=values.map { it.first } && previous!=values.take(previous.size).map { it.first }) {
-            candidateScroll.scrollTo(0,0);expandedScroll.scrollTo(0,0)
-        }
+        cloudCandidates.removeAllViews()
+        predictionValues.forEach { (text,choose) -> cloudCandidates.addView(button(text,15,Color.TRANSPARENT,choose).apply {
+            setTextColor(green);setPadding(dp(12),0,dp(12),0);contentDescription="$text，AI 候选"
+        },LayoutParams(-2,-1)) }
+        cloudRow.visibility=if(predictionValues.isNotEmpty())VISIBLE else GONE
+        candidates.addView(cloudRow,LayoutParams(-2,-1))
         if(!hasCandidates)setExpanded(false) else if(expanded)renderExpanded()
         updateStrip()
     }
     private fun render() {
         if(spaceKey?.tracking==true) { pendingRender=true;return }
         pendingRender=false;spaceKey=null;body.removeAllViews()
+        content.layoutParams=LayoutParams(-1,dp(heightPreset.padDp+4))
         if(chinese && nineKey && !symbols)renderNineKey() else renderFullKeys()
         if(expanded)setExpanded(false)
         updateStrip()
@@ -392,7 +397,8 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     }
     fun panel(title: String,entries: List<Pair<String,()->Unit>>) {
         composing=false;compositionText=""
-        cancelSpaceGesture();spaceKey=null;body.removeAllViews();setCandidates(emptyList());setPredictions(emptyList());status(title)
+        cancelSpaceGesture();spaceKey=null;body.removeAllViews();clearCandidates();status(title)
+        content.layoutParams=LayoutParams(-1,dp(heightPreset.padDp+4))
         val list=LinearLayout(context).apply { orientation=VERTICAL }
         entries.forEach { (label,choose) -> list.addView(button(label,14) { choose() }.apply { setPadding(dp(12),0,dp(12),0);gravity=Gravity.CENTER_VERTICAL },LayoutParams(-1,dp(43)).apply { topMargin=dp(4) }) }
         body.addView(ScrollView(context).apply { addView(list) },LayoutParams(-1,dp(heightPreset.padDp-44)))

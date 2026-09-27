@@ -73,6 +73,25 @@ class NineKeyImeTest {
         emit(SpeechWire.FINAL,"hello");emit(SpeechWire.PARTIAL,"wor");assertEquals("hello wor",f.text.toString())
         emit(SpeechWire.FINAL,"world");emit(SpeechWire.DONE,"");assertEquals("hello world",f.text.toString())
     }
+    @Test fun speechCompletionAndFailuresRestorePersonalCandidatesWithoutGrowingTheKeyboard()=Fixture().use { f ->
+        val prefs=Prefs(f.service);prefs.set("cloud",false);prefs.set("private",false);prefs.set("learning",false)
+        ReflectionHelpers.setField(f.service,"restricted",false)
+        ReflectionHelpers.setField(f.service,"personal",listOf(Term("个人词","gerenci",1,false,"manual")))
+        fun height(): Int {
+            f.keyboard.measure(View.MeasureSpec.makeMeasureSpec(1080,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED))
+            f.keyboard.layout(0,0,f.keyboard.measuredWidth,f.keyboard.measuredHeight);return f.keyboard.height
+        }
+        fun emit(kind: Int,text: String)=ReflectionHelpers.callInstanceMethod<Unit>(f.service,"onSpeech",ClassParameter.from(Int::class.javaPrimitiveType,kind),ClassParameter.from(String::class.java,text))
+        val before=height()
+        for(kind in listOf(SpeechWire.DONE,SpeechWire.ERROR,SpeechWire.MODEL_REQUIRED)) {
+            ReflectionHelpers.setField(f.service,"voice",true);ReflectionHelpers.setField(f.service,"speechDone",false);f.keyboard.voice(true)
+            emit(SpeechWire.READY,"正在听");assertEquals(before,height())
+            emit(kind,if(kind==SpeechWire.MODEL_REQUIRED)"请下载离线模型" else "识别失败")
+            assertEquals(before,height());assertFalse(ReflectionHelpers.getField(f.service,"voice"))
+            assertTrue("Missing personal candidates after speech event $kind",all(f.keyboard.findViewWithTag("candidate_strip")).filterIsInstance<TextView>().any { it.text=="个人词" })
+        }
+        ReflectionHelpers.setField(f.service,"restricted",true)
+    }
     private fun all(v: View): List<View> = listOf(v)+(if(v is ViewGroup)(0 until v.childCount).flatMap { all(v.getChildAt(it)) } else emptyList())
     private class Fixture: AutoCloseable {
         val life=Robolectric.buildService(LoopImeService::class.java).create()
