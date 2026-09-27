@@ -24,6 +24,14 @@ class KeyboardIcon(c: Context,var glyph: String) : View(c) {
             val p=Path();points.forEachIndexed { i,(x,y) -> if(i==0)p.moveTo(x,y) else p.lineTo(x,y) };if(close)p.close();canvas.drawPath(p,paint)
         }
         when(glyph) {
+            "memory","phrases" -> { canvas.drawRoundRect(4f,3f,20f,21f,2f,2f,paint);line(8f,8f,16f,8f);line(8f,12f,16f,12f);line(8f,16f,13f,16f) }
+            "emoji" -> { canvas.drawCircle(12f,12f,10f,paint);line(8f,8f,8f,9f);line(16f,8f,16f,9f);canvas.drawArc(7f,10f,17f,18f,0f,180f,false,paint) }
+            "edit" -> { line(4f,5f,20f,5f);line(12f,5f,12f,20f);line(8f,20f,16f,20f);line(4f,3f,4f,8f);line(20f,3f,20f,8f) }
+            "keyboard","layouts" -> { canvas.drawRoundRect(2f,5f,22f,19f,2f,2f,paint);for(y in listOf(9f,12f))for(x in listOf(6f,10f,14f,18f))line(x,y,x+.5f,y);line(7f,16f,17f,16f) }
+            "height" -> { line(5f,3f,5f,21f);path(2f to 6f,5f to 3f,8f to 6f);path(2f to 18f,5f to 21f,8f to 18f);canvas.drawRoundRect(12f,4f,21f,20f,1f,1f,paint) }
+            "settings" -> { line(3f,7f,21f,7f);line(3f,17f,21f,17f);canvas.drawCircle(8f,7f,3f,paint);canvas.drawCircle(16f,17f,3f,paint) }
+            "hand" -> { canvas.drawRoundRect(7f,2f,21f,22f,3f,3f,paint);path(7f to 13f,3f to 10f,1f to 12f,6f to 21f);line(12f,18f,16f,18f) }
+            "quick" -> path(13f to 2f,5f to 13f,11f to 13f,10f to 22f,20f to 9f,13f to 9f,close=true)
             "tools" -> {
                 val p=Path().apply { moveTo(12f,12f);cubicTo(8f,5f,2f,5f,2f,12f);cubicTo(2f,19f,8f,19f,12f,12f);cubicTo(16f,5f,22f,5f,22f,12f);cubicTo(22f,19f,16f,19f,12f,12f) };canvas.drawPath(p,paint)
             }

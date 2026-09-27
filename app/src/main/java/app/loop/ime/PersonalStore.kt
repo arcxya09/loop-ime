@@ -11,6 +11,8 @@ import java.util.UUID
 
 data class Term(val text: String, val pinyin: String, val score: Int, val cloud: Boolean, val source: String,val lastUsed: Long=0,val inputCode: String="",val evidence: List<RankingEvidence> = emptyList())
 data class Memory(val id: String, val text: String, val time: Long, val source: String, val status: String, val cloud: Boolean)
+data class Phrase(val id: String,val text: String,val group: String)
+
 data class Clip(val id: String, val text: String, val pinned: Boolean)
 
 /** Writes are transactional; WAL permits independent AI reads. The ASR process never opens keys or the database. */
@@ -67,6 +69,10 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
                     db.execSQL("ALTER TABLE evidence ADD COLUMN contexts TEXT NOT NULL DEFAULT '{}'")
                     db.execSQL("CREATE INDEX evidence_choice_recent ON evidence(kind,last_used DESC)")
                     db.version=5
+                }
+                if(db.version==5) {
+                    db.execSQL("CREATE TABLE phrases(id TEXT PRIMARY KEY,text TEXT NOT NULL,category TEXT NOT NULL)")
+                    db.version=6
                 }
             }
             check(db.query("PRAGMA foreign_key_check").use { !it.moveToFirst() }) { "词库来源校验失败，原记录保留" }
@@ -253,8 +259,16 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
         }
         return out
     }
+    fun phrases(query: String=""): List<Phrase> = db.query("SELECT id,text,category FROM phrases WHERE instr(text,?)>0 OR instr(category,?)>0 ORDER BY category,text LIMIT 300",arrayOf<Any>(query,query)).use { c ->
+        buildList { while(c.moveToNext())add(Phrase(c.getString(0),c.getString(1),c.getString(2))) }
+    }
+    fun savePhrase(id: String,text: String,group: String) {
+        require(text.isNotBlank() && text.length<=2000 && group.length<=40 && !QuickText.sensitive(text)) { "短语需 1–2000 字，分组最多 40 字，不保存验证码消息" }
+        db.insert("phrases",SQLiteDatabase.CONFLICT_REPLACE,cv("id" to id,"text" to text.trim(),"category" to group.trim().ifBlank { "常用" }));StoreEvents.changed()
+    }
+    fun deletePhrase(id: String) { db.execSQL("DELETE FROM phrases WHERE id=?",arrayOf<Any>(id));StoreEvents.changed() }
     fun addClip(text: String) {
-        if(text.isBlank() || text.length>20000)return
+        if(text.isBlank() || text.length>20000 || QuickText.sensitive(text))return
         db.execSQL("DELETE FROM clips WHERE text=? AND pinned=0",arrayOf<Any>(text))
         db.insert("clips",SQLiteDatabase.CONFLICT_ABORT,cv("id" to UUID.randomUUID().toString(),"text" to text,"time" to System.currentTimeMillis()))
         pruneClips()
@@ -271,7 +285,7 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
     fun clearClips() { db.execSQL("DELETE FROM clips") }
     fun exportRows(write: (JSONObject)->Unit) {
         transaction {
-            for(table in listOf("memories","terms","evidence","forgotten","clips")) {
+            for(table in listOf("memories","terms","evidence","forgotten","clips","phrases")) {
                 db.query("SELECT * FROM $table",emptyArray<String>()).use { c -> while(c.moveToNext()) {
                     val j=JSONObject().put("table",table)
                     c.columnNames.forEachIndexed { i,n -> if(c.getType(i)==android.database.Cursor.FIELD_TYPE_INTEGER)j.put(n,c.getLong(i)) else j.put(n,c.getString(i)) }
@@ -293,11 +307,11 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
         val result=try {
             rows.forEach { row ->
                 val kind=row.getString("table")
-                check(kind in setOf("memories","terms","evidence","forgotten","clips")) { "无效备份表" }
+                check(kind in setOf("memories","terms","evidence","forgotten","clips","phrases")) { "无效备份表" }
                 db.insert("loop_import_rows",SQLiteDatabase.CONFLICT_ABORT,cv("kind" to kind,"payload" to row.toString()))
             }
             val ordered=sequence {
-                for(kind in listOf("memories","terms","evidence","forgotten","clips")) {
+                for(kind in listOf("memories","terms","evidence","forgotten","clips","phrases")) {
                     db.query("SELECT payload FROM loop_import_rows WHERE kind=? ORDER BY position",arrayOf<Any>(kind)).use { c ->
                         while(c.moveToNext())yield(JSONObject(c.getString(0)))
                     }
@@ -314,7 +328,7 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
     }
     private fun mergeRows(rows: Sequence<JSONObject>): ImportResult {
         val result=ImportResult()
-        val fields=mapOf("memories" to setOf("id","text","time","source","status","cloud","learned"),"terms" to setOf("text","pinyin","score","cloud","source","pinned"),"evidence" to setOf("term","origin","kind"),"forgotten" to setOf("text"),"clips" to setOf("id","text","time","pinned"))
+        val fields=mapOf("memories" to setOf("id","text","time","source","status","cloud","learned"),"terms" to setOf("text","pinyin","score","cloud","source","pinned"),"evidence" to setOf("term","origin","kind"),"forgotten" to setOf("text"),"clips" to setOf("id","text","time","pinned"),"phrases" to setOf("id","text","category"))
         rows.forEach { j ->
             val t=j.getString("table");val cols=fields[t] ?: error("无效备份表")
             val values=ContentValues();cols.forEach { k -> val v=j.get(k);require(v.toString().length<=200000);if(v is Number)values.put(k,v.toLong()) else values.put(k,v.toString()) }
@@ -355,6 +369,7 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
                     values.put("contexts",CandidateRanking.encodeContexts(CandidateRanking.decodeContexts(values.getAsString("contexts"),values.getAsInteger("uses")),values.getAsInteger("uses")))
                 }
             }
+            if(t in setOf("clips","phrases") && QuickText.sensitive(j.getString("text"))) { result.skipped++;return@forEach }
             val inserted=db.insert(t,SQLiteDatabase.CONFLICT_IGNORE,values)
             if(inserted!=-1L)result.added++ else when(t) {
                 "terms" -> { db.execSQL("UPDATE terms SET cloud=min(cloud,?),pinyin=CASE WHEN pinned=0 AND ?=1 THEN ? ELSE pinyin END,pinned=max(pinned,?) WHERE text=?",arrayOf<Any>(j.getInt("cloud"),j.getInt("pinned"),j.getString("pinyin"),j.getInt("pinned"),j.getString("text")));result.merged++ }
@@ -376,7 +391,7 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
         StoreEvents.changed()
     }
     companion object {
-        const val SCHEMA_VERSION=5
+        const val SCHEMA_VERSION=6
         private var instance: PersonalStore? = null
         private var lastFailure: DatabaseUnavailable?=null
         private var failedUntil=0L

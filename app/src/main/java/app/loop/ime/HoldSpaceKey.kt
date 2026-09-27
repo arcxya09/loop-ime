@@ -8,11 +8,16 @@ import android.widget.TextView
 
 /** Owns the pointer until UP/CANCEL, even while voice preparation updates the rest of the keyboard. */
 class HoldSpaceKey(c: Context, private val hold: (Boolean)->Unit,
-    private val gestureFinished: ()->Unit, private val accessibleVoice: ()->Unit) : TextView(c) {
+    private val gestureFinished: ()->Unit, private val accessibleVoice: ()->Unit,
+    private val cursorMove: (Boolean)->Unit = {},private val cursorEnabled: ()->Boolean = { false }) : TextView(c) {
     var tracking=false; private set
     var holding=false; private set
     private var pointer=-1
     private var tapAllowed=false
+    private var originX=0f
+    private var originY=0f
+    private var lastX=0f
+    private var sliding=false
     private val slop=ViewConfiguration.get(c).scaledTouchSlop
     private val startHold=Runnable {
         if(tracking && tapAllowed) {
@@ -26,12 +31,18 @@ class HoldSpaceKey(c: Context, private val hold: (Boolean)->Unit,
         when(e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 cancelGesture();tracking=true;pointer=e.getPointerId(0);tapAllowed=true;isPressed=true
+                originX=e.x;originY=e.y;lastX=e.x;sliding=false
                 // Faster voice activation with the normal system setting; respect longer accessibility delays.
                 val systemDelay=ViewConfiguration.getLongPressTimeout()
                 postDelayed(startHold,if(systemDelay<=500)250L else systemDelay.toLong())
             }
             MotionEvent.ACTION_MOVE -> if(tracking && !holding) {
                 val i=e.findPointerIndex(pointer)
+                if(i>=0 && cursorEnabled() && kotlin.math.abs(e.getY(i)-originY)<24*resources.displayMetrics.density) {
+                    val x=e.getX(i);val step=18*resources.displayMetrics.density
+                    if(!sliding && kotlin.math.abs(x-originX)>28*resources.displayMetrics.density) { sliding=true;tapAllowed=false;removeCallbacks(startHold);text="移动光标" }
+                    if(sliding) { while(kotlin.math.abs(x-lastX)>=step) { val left=x<lastX;cursorMove(left);lastX+=if(left)-step else step };return true }
+                }
                 if(i<0 || e.getX(i)<-slop || e.getY(i)<-slop || e.getX(i)>width+slop || e.getY(i)>height+slop) {
                     tapAllowed=false;isPressed=false;removeCallbacks(startHold)
                 }
@@ -50,7 +61,7 @@ class HoldSpaceKey(c: Context, private val hold: (Boolean)->Unit,
     private fun finishGesture(render: Boolean=true) {
         removeCallbacks(startHold)
         val wasHolding=holding
-        tracking=false;holding=false;tapAllowed=false;pointer=-1;isPressed=false
+        tracking=false;holding=false;tapAllowed=false;pointer=-1;isPressed=false;sliding=false
         text="按住说话"
         if(wasHolding)hold(false)
         if(render)gestureFinished()

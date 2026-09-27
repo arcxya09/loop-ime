@@ -14,11 +14,11 @@ object ImeAppearance {
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
         // The keyboard paints underneath the transparent IME caption strip on edge-to-edge Android.
         // Older/OEM three-button paths still use this matching navigation bar color.
-        window.navigationBarColor=SURFACE
+        window.navigationBarColor=UiPalette.surface(window.context)
         window.navigationBarDividerColor=Color.TRANSPARENT
         window.isNavigationBarContrastEnforced=false
         window.insetsController?.setSystemBarsAppearance(
-            WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+            if(UiPalette.dark(window.context))0 else WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
             WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
     }
 }

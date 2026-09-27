@@ -39,7 +39,7 @@ object ConnectionBackup {
         } finally { plain.fill(0);bytes.fill(0) }
     }
     private val bundleMagic="LOOPAI02".toByteArray(Charsets.US_ASCII)
-    private val booleanSettings=setOf("private","cloud","memory","memory_cloud","cloud_learning","learning","ai_t9","predict","autocorrect","punctuation","chinese_t9","speech_cloud","speech_cloud_terms","rotation","clipboard")
+    private val booleanSettings=setOf("private","cloud","memory","memory_cloud","cloud_learning","learning","ai_t9","predict","autocorrect","punctuation","chinese_t9","speech_cloud","speech_cloud_terms","rotation","clipboard","quick_clip","otp_clip","cursor_gesture")
     fun exportAll(c: android.content.Context,output: OutputStream,password: CharArray,vault: Vault=Vault(c)) {
         val profiles=AiProfiles(c,vault);val p=JSONObject()
         val names=profiles.names();require(names.size<=32) { "配置数量超出备份限制" }
@@ -49,6 +49,7 @@ object ConnectionBackup {
         require(p.length()>0 || speech.length()>0) { "请先保存文本 AI 或百炼语音配置" }
         val prefs=Prefs(c);val settings=JSONObject();booleanSettings.forEach { k -> if(prefs.store.contains(k))settings.put(k,prefs.flag(k)) }
         settings.put("keyboard_height",prefs.keyboardHeight.value)
+        settings.put("one_hand",prefs.text("one_hand","off")).put("tool_order",ToolCatalog.order(prefs.text("tool_order")).joinToString(","))
         settings.put("correction_mode",prefs.correctionMode.name).put("local_apps",prefs.text("local_apps"))
         val body=JSONObject().put("format",2).put("profiles",p).put("selected",prefs.text("profile",AiProtocol.DEFAULT_PROFILE))
             .put("speech",speech).put("speech_region",CloudSpeechSettings(c,vault).region()).put("settings",settings)
@@ -87,10 +88,13 @@ object ConnectionBackup {
                     val mode=settings.optString("correction_mode").takeIf { it.isNotBlank() }?.also { value -> require(CorrectionMode.entries.any { it.name==value }) }
                     val localApps=settings.optString("local_apps").also { value -> require(value.length<=20000 && value.split('\n').all { it.isEmpty() || it.matches(Regex("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+")) }) }
                     val booleans=booleanSettings.filter { settings.has(it) }.associateWith { require(settings.get(it) is Boolean);settings.getBoolean(it) }
+                    val hand=settings.optString("one_hand","off").also { require(it in setOf("off","left","right")) }
+                    val tools=ToolCatalog.order(settings.optString("tool_order","")).joinToString(",")
                     // Authentication and every field validation finish before the atomic encrypted write.
                     vault.putMany(records)
                     val prefs=Prefs(c);val edit=prefs.store.edit().putString("profile",selected).putString("profiles",AiProfiles(c,vault).names().joinToString(","))
                         .putString("speech_region",region).putString("keyboard_height",height.value)
+                        .putString("one_hand",hand).putString("tool_order",tools)
                     booleans.forEach { (k,v)->edit.putBoolean(k,v) }
                     if(mode!=null)edit.putString("correction_mode",mode) else edit.remove("correction_mode")
                     if(settings.has("local_apps"))edit.putString("local_apps",localApps)

@@ -28,6 +28,28 @@ import java.util.concurrent.TimeUnit
 @Config(sdk=[37],application=Application::class)
 @LooperMode(LooperMode.Mode.PAUSED)
 class NineKeyImeTest {
+    @Test fun toolsAndSubpanelsPreserveUncommittedPinyinAndReturnCandidates()=Fixture().use { f ->
+        f.type()
+        for(panel in listOf("tools","height","layouts","emoji","edit")) {
+            f.press(panel);f.drain();assertTrue(f.keyboard.panelOpen)
+            assertEquals("",f.text.toString());assertEquals("64426",ReflectionHelpers.getField<RimeState>(f.service,"state").raw)
+        }
+        f.press("panel_close");f.drain();assertFalse(f.keyboard.panelOpen)
+        assertEquals("ni hao",f.keyboard.findViewWithTag<TextView>("keyboard_preedit").text.toString())
+        f.press("space");f.drain();assertEquals("你",f.text.toString())
+        f.press("emoji");f.press("symbol:😀");f.drain();assertEquals("你😀",f.text.toString());assertTrue(f.keyboard.panelOpen)
+    }
+    @Test fun otpQuickFillIsConsumedAndNeverEntersHistoryOrFollowingCloudContext()=Fixture().use { f ->
+        val writes=mutableListOf<DraftSnapshot>();ReflectionHelpers.setField(f.service,"history",InputHistory(writes::add))
+        ReflectionHelpers.setField(f.service,"restricted",false);Prefs(f.service).set("clipboard",true)
+        val clips=ReflectionHelpers.getField<SuggestionBuffer>(f.service,"quickClips")
+        clips.offer("test","验证码 001234","剪贴板",System.currentTimeMillis())
+        val id=clips.values().single().id
+        f.press("quick:$id");f.drain();assertEquals("001234",f.text.toString());assertTrue(writes.isEmpty())
+        assertTrue(clips.values().isEmpty());assertTrue(ReflectionHelpers.getField(f.service,"cloudBlocked"))
+        f.press("quick:$id");f.press("下文");f.drain();assertEquals("001234下文",f.text.toString());assertTrue(writes.isEmpty())
+        ReflectionHelpers.setField(f.service,"restricted",true)
+    }
     @Test fun contextualFirstCandidateIsSharedByDisplaySpaceAndEnterWithoutDoubleCountingJournal()=Fixture().use { f ->
         val history=InputHistory {};ReflectionHelpers.setField(f.service,"history",history)
         ReflectionHelpers.setField(f.service,"restricted",false);Prefs(f.service).set("learning",true)
@@ -118,7 +140,7 @@ class NineKeyImeTest {
         ReflectionHelpers.setField(f.service,"restricted",false)
         f.service.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("test","当前剪贴板"))
         f.press("clipboard");f.drain()
-        all(f.keyboard).filterIsInstance<TextView>().single { it.text=="当前剪贴板" }.performClick()
+        all(f.keyboard).filterIsInstance<TextView>().single { it.text=="插入" }.performClick()
         assertEquals("当前剪贴板",f.text.toString());assertTrue(ReflectionHelpers.getField(f.service,"cloudBlocked"))
         ReflectionHelpers.setField(f.service,"restricted",true)
     }

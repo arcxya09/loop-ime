@@ -62,10 +62,18 @@ class LoopImeService : InputMethodService() {
     private var voiceRecovery=""
     private val storeChanged: ()->Unit = { if(::prefs.isInitialized) { refreshTerms();refreshSpeechTerms() } }
     private var clipLast=""
+    private var observedClip=""
+    private var observedClipTime=0L
+    private var activePanel=""
+    private var transientField=false
+    private val quickClips=SuggestionBuffer()
+    private val clipExpiry=Runnable { quickClips.values() }
+    private val otpChanged: ()->Unit = { if(visible && ::keyboard.isInitialized) { if(activePanel=="quick")showPanel("quick") else renderCandidates() } }
+    private val suggestionExpiry=object: Runnable { override fun run() { if(visible) { renderCandidates();LoopApp.main.postDelayed(this,15000) } } }
     private val voiceQueue=ArrayDeque<Segment>()
     private data class Segment(val raw: String, var text: String, var ready: Boolean=false, var call: AiCall?=null)
-    private val screen=object: BroadcastReceiver() { override fun onReceive(c: Context,i: Intent) { if(i.action==Intent.ACTION_SCREEN_OFF) { visible=false;LoopApp.keyboardVisible=false;stopForNavigation() } } }
-    private val clipboardListener=ClipboardManager.OnPrimaryClipChangedListener { if(visible && !restricted && !prefs.privateMode && prefs.flag("clipboard"))captureClip() }
+    private val screen=object: BroadcastReceiver() { override fun onReceive(c: Context,i: Intent) { if(i.action==Intent.ACTION_SCREEN_OFF) { visible=false;LoopApp.keyboardVisible=false;quickClips.clear();OtpInbox.clear();stopForNavigation() } } }
+    private val clipboardListener=ClipboardManager.OnPrimaryClipChangedListener { if(visible && !restricted && ::prefs.isInitialized && !prefs.privateMode) { captureClip();renderCandidates() } }
 
     override fun onCreate() {
         setTheme(R.style.LoopImeTheme)
@@ -75,7 +83,7 @@ class LoopImeService : InputMethodService() {
         if(LoopApp.unlocked(this))prefs=Prefs(this)
         nineAi=NineKeyAiSession({ query,callback -> AiClient(this).nineKey(query,callback) },::nineKeyAiAllowed,::renderCandidates,status={ if(visible && ::keyboard.isInitialized)keyboard.aiStatus(it) })
         speech=SpeechController(this,::onSpeech)
-        StoreEvents.add(storeChanged)
+        StoreEvents.add(storeChanged);OtpInbox.listeners.add(otpChanged)
         if(LoopApp.unlocked(this))DraftWriter.get(this).recover()
         lastOrientation=resources.configuration.orientation
         registerReceiver(screen,IntentFilter(Intent.ACTION_SCREEN_OFF),Context.RECEIVER_NOT_EXPORTED)
@@ -104,7 +112,7 @@ class LoopImeService : InputMethodService() {
         super.onStartInput(info,restarting)
         // Android has already replaced currentInputConnection here: abandon old ownership before cleanup.
         editor.start(minOf(info.initialSelStart,info.initialSelEnd))
-        stopForNavigation();fieldEpoch++;keys.clear();busy=false;state=RimeState();rime.clear()
+        stopForNavigation();activePanel="";transientField=false;fieldEpoch++;keys.clear();busy=false;state=RimeState();rime.clear()
         val klass=info.inputType and InputType.TYPE_MASK_CLASS
         val variation=info.inputType and InputType.TYPE_MASK_VARIATION
         passwordField=(klass==InputType.TYPE_CLASS_TEXT && variation in setOf(InputType.TYPE_TEXT_VARIATION_PASSWORD,InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)) ||
@@ -120,15 +128,24 @@ class LoopImeService : InputMethodService() {
         keyboard.setHeightPreset(if(LoopApp.unlocked(this))prefs.keyboardHeight else KeyboardHeight.HIGH)
         keyboard.setNineKey(nineKey)
         symbolsMode=(info.inputType and InputType.TYPE_MASK_CLASS) in setOf(InputType.TYPE_CLASS_NUMBER,InputType.TYPE_CLASS_PHONE,InputType.TYPE_CLASS_DATETIME)
+        keyboard.setInputKind(when(info.inputType and InputType.TYPE_MASK_CLASS) {
+            InputType.TYPE_CLASS_PHONE->"phone";InputType.TYPE_CLASS_NUMBER->if(info.inputType and InputType.TYPE_NUMBER_FLAG_DECIMAL!=0)"decimal" else "number";InputType.TYPE_CLASS_DATETIME->"date"
+            else->when(info.inputType and InputType.TYPE_MASK_VARIATION) { InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS->"email";InputType.TYPE_TEXT_VARIATION_URI->"url";else->"text" }
+        })
+        keyboard.setHand(if(::prefs.isInitialized)prefs.text("one_hand","off") else "off")
+        keyboard.setCursorGesture(::prefs.isInitialized && prefs.flag("cursor_gesture",true))
         keyboard.setMode(chinese,symbolsMode)
         keyboard.setEnter(EnterKey.forEditor(info).label)
         keyboard.status(if(restricted)"此输入框不记录、不学习、不调用 AI" else if(prefs.privateMode)"隐私模式 · 本地输入" else if(chinese)"简体${if(nineKey)"九宫格" else "全键盘"} · 长按空格说话" else "英文 · 长按空格说话")
+        if(!restricted && !prefs.privateMode)captureClip()
+        if(!restricted && !prefs.privateMode)OtpInbox.recentSms(this)
+        LoopApp.main.removeCallbacks(suggestionExpiry);LoopApp.main.postDelayed(suggestionExpiry,15000)
         renderCandidates()
         scheduleNineKeyAi()
         if(!restricted && voiceRecovery.isNotEmpty())keyboard.status("有尚未插入的语音 · 点击处理",::showVoiceRecovery)
         else if(!restricted && LoopApp.unlocked(this) && prefs.text("memory_last_error").isNotEmpty())keyboard.status(prefs.text("memory_last_error"))
     }
-    override fun onFinishInputView(finishingInput: Boolean) { visible=false;LoopApp.keyboardVisible=false;stopForNavigation();fieldEpoch++;keys.clear();busy=false;state=RimeState();rime.clear();super.onFinishInputView(finishingInput) }
+    override fun onFinishInputView(finishingInput: Boolean) { visible=false;LoopApp.keyboardVisible=false;stopForNavigation();activePanel="";transientField=false;fieldEpoch++;keys.clear();busy=false;state=RimeState();rime.clear();super.onFinishInputView(finishingInput) }
     override fun onFinishInput() { stopForNavigation();fieldEpoch++;rime.clear();super.onFinishInput() }
     override fun onUpdateSelection(oldSelStart: Int,oldSelEnd: Int,newSelStart: Int,newSelEnd: Int,candidatesStart: Int,candidatesEnd: Int) {
         super.onUpdateSelection(oldSelStart,oldSelEnd,newSelStart,newSelEnd,candidatesStart,candidatesEnd)
@@ -166,32 +183,55 @@ class LoopImeService : InputMethodService() {
         if(key=="voice_hold_start") { if(holdRequested)startVoice(true,done) else done();return }
         if(key=="mic") { if(voice) { finishVoiceCapture();done() } else startVoice(false,done);return }
         if(key=="cancel_voice") { cancelVoice(true);done();return }
-        if(key in setOf("settings","ai_settings","speech_settings","offline_model_settings")) { stopForNavigation();startActivity(Intent(this,SettingsActivity::class.java).putExtra("page",when(key) { "ai_settings"->"api";"speech_settings"->"speech";"offline_model_settings"->"offline_model";else->"home" }).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));done();return }
+        if(key in setOf("settings","ai_settings","speech_settings","offline_model_settings","phrase_settings","quick_settings","keyboard_settings")) { stopForNavigation();startActivity(Intent(this,SettingsActivity::class.java).putExtra("page",when(key) { "ai_settings"->"api";"speech_settings"->"speech";"offline_model_settings"->"offline_model";"phrase_settings"->"phrases";"quick_settings"->"quick";"keyboard_settings"->"keyboard";else->"home" }).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));done();return }
         if(key=="hide") { requestHideSelf(0);done();return }
         if(key=="app_privacy") {
             val pkg=currentInputEditorInfo?.packageName.orEmpty()
             if(LoopApp.unlocked(this) && pkg.isNotBlank()) {
                 stopForNavigation();prefs.setLocalApp(pkg,!prefs.localApp(pkg))
-                currentInputEditorInfo?.let { onStartInput(it,true);onStartInputView(it,true) }
+                currentInputEditorInfo?.let { onStartInput(it,true);onStartInputView(it,true) };showPanel("tools")
             }
             done();return
         }
-        if(key=="privacy") { if(LoopApp.unlocked(this)) { stopForNavigation();prefs.set("private",!prefs.privateMode);keyboard.status(if(prefs.privateMode)"隐私模式已开启" else "隐私模式已关闭");refreshTerms() };done();return }
+        if(key=="privacy") { if(LoopApp.unlocked(this)) { stopForNavigation();prefs.set("private",!prefs.privateMode);quickClips.clear();OtpInbox.clear();refreshTerms();showPanel("tools") };done();return }
         if(voice) { done();return }
-        if(key in setOf("clipboard","memory","emoji","punctuation","tools","height")) { if(state.raw.isNotEmpty()) { commitRime { showPanel(key);done() } } else { showPanel(key);done() };return }
+        if(key in setOf("clipboard","memory","emoji","punctuation","tools","height","layouts","edit","hand","phrases","quick")) { showPanel(key);done();return }
+        if(key.startsWith("quick:")) { val insert={ insertQuick(key.substringAfter(':'));done() };if(state.raw.isNotEmpty())commitRime(insert) else insert();return }
+        if(key=="quick_dismiss") { quickClips.values().forEach { quickClips.consume(it.id) };OtpInbox.buffer.values().forEach { OtpInbox.buffer.consume(it.id) };renderCandidates();done();return }
+        if(key.startsWith("hand:")) { val value=key.substringAfter(':');prefs.set("one_hand",value);keyboard.setHand(value);showPanel("hand");done();return }
+        if(key.startsWith("layout:")) { val nine=key.substringAfter(':')=="nine";if(nine==nineKey) { showPanel("layouts");done() } else handle("layout") { showPanel("layouts");done() };return }
+        if(key.startsWith("symbol:")) { val value=key.substringAfter(':');val panel=activePanel;val insert={ commit(value);showPanel(panel);done() };if(state.raw.isNotEmpty())commitRime(insert) else insert();return }
+        if(key in setOf("select_all","copy","cut","paste","undo_edit")) {
+            val act={ cancelAi();flushDraft();latestText=""
+                when(key) {
+                    "undo_edit" -> { if(editor.undoLast())recordEdit("undo") else keyboard.status("没有可安全撤销的操作") }
+                    "paste" -> { val text=captureClip();if(text!=null)insertLocal(text) else keyboard.status("没有可读取的普通剪贴板文本") }
+                    else -> {
+                        if(key!="select_all" && restricted)keyboard.status("隐私字段不复制或剪切内容")
+                        else {
+                            val ic=currentInputConnection
+                            if(key=="cut") {
+                                if(!ic?.getSelectedText(0).isNullOrEmpty() && ic?.performContextMenuAction(android.R.id.copy)==true && editor.delete())recordEdit("cut")
+                                else keyboard.status("请选择可剪切的文本")
+                            } else if(ic?.performContextMenuAction(if(key=="select_all")android.R.id.selectAll else android.R.id.copy)!=true)keyboard.status("输入框未接收操作")
+                        }
+                    }
+                };showPanel("edit");done()
+            };if(state.raw.isNotEmpty())commitRime(act) else act();return
+        }
         if(key.startsWith("height:")) {
             val preset=KeyboardHeight.from(key.substringAfter(':'))
             if(LoopApp.unlocked(this))prefs.keyboardHeight=preset
-            keyboard.setHeightPreset(preset);keyboard.setMode(chinese,symbolsMode);renderCandidates();keyboard.status("键盘高度：${preset.label}");done();return
+            keyboard.setHeightPreset(preset);showPanel("height");done();return
         }
-        if(key=="panel_close") { renderCandidates();done();return }
-        if(key=="undo") { applyUndo();done();return }
+        if(key=="panel_close") { activePanel="";keyboard.closePanel();renderCandidates();done();return }
+        if(key=="undo") { applyUndo();if(activePanel=="edit")showPanel("edit");done();return }
         if(key=="retype") {
             cancelAi()
             if(state.raw.isNotEmpty())rimeEvent(0,2,done) else done()
             return
         }
-        if(key=="left" || key=="right") { cancelAi();flushDraft();rime.clear();state=RimeState();editor.navigate(key=="left");renderCandidates();done();return }
+        if(key=="left" || key=="right") { val move={ cancelAi();flushDraft();latestText="";editor.navigate(key=="left");renderCandidates();done() };if(state.raw.isNotEmpty())commitRime(move) else move();return }
         if(key=="symbols" || key=="numbers") {
             cancelAi();latestText=""
             val change={ symbolsMode=!symbolsMode;keyboard.setMode(chinese,symbolsMode);renderCandidates();done() }
@@ -294,12 +334,12 @@ class LoopImeService : InputMethodService() {
         return ok
     }
     private fun recordEdit(source: String) {
-        if(restricted || !LoopApp.unlocked(this) || prefs.privateMode)return
+        if(transientField || restricted || !LoopApp.unlocked(this) || prefs.privateMode)return
         history.apply(editor.lastEdit,source,prefs.memory,prefs.cloud && !cloudBlocked && prefs.flag("memory_cloud"))
     }
     private fun record(text: String,source: String) {
         if(text.isEmpty())return
-        if(restricted || !LoopApp.unlocked(this) || prefs.privateMode) { latestText="";return }
+        if(transientField || restricted || !LoopApp.unlocked(this) || prefs.privateMode) { latestText="";return }
         recordEdit(source)
         latestText=history.context(editor.cursor);latestTime=SystemClock.uptimeMillis();latestId=history.lastId
         recentWrites.add(text.length to latestTime)
@@ -312,7 +352,7 @@ class LoopImeService : InputMethodService() {
         if(LoopApp.unlocked(this) && ::prefs.isInitialized)LearnJob.schedule(this)
     }
     private fun learnChoice(text: String,pinyin: String="",inputCode: String="") {
-        if(restricted || prefs.privateMode || !prefs.learning)return
+        if(transientField || restricted || prefs.privateMode || !prefs.learning)return
         history.learn(text,pinyin,prefs.cloud && !cloudBlocked,inputCode)
     }
     private fun refreshTerms() {
@@ -383,7 +423,7 @@ class LoopImeService : InputMethodService() {
     }
     private fun renderCandidates() {
         if(!::keyboard.isInitialized)return
-        if(voice)return
+        if(voice || keyboard.panelOpen)return
         val list=mutableListOf<Pair<String,()->Unit>>()
         val cloud=mutableListOf<Pair<String,()->Unit>>()
         val revision=candidateRevision
@@ -416,6 +456,11 @@ class LoopImeService : InputMethodService() {
                     }) }
                 }
             }
+        }
+        if(state.raw.isEmpty() && visible && !restricted && !prefs.privateMode) {
+            val epoch=fieldEpoch
+            availableQuick().take(3).asReversed().forEach { item -> list.add(0,"${item.label} ${item.text.take(24)}" to { if(epoch==fieldEpoch)enqueue("quick:${item.id}") }) }
+            if(availableQuick().isNotEmpty())list+=("忽略建议" to { if(epoch==fieldEpoch)enqueue("quick_dismiss") })
         }
         keyboard.candidatePaging(!symbolsMode && state.raw.isNotEmpty() && (state.hasMore || personalHasMore))
         keyboard.setCandidates(list.distinctBy { it.first })
@@ -574,63 +619,84 @@ class LoopImeService : InputMethodService() {
         voiceQueue.forEach { it.call?.cancel() };voiceQueue.clear();partial=""
         if(voice && editor.owner=="voice")editor.cancelComposition()
         voice=false;stoppingVoice=false;cancelAi();if(::nineAi.isInitialized)nineAi.cancel(clearCache=true);if(::prefs.isInitialized)flushDraft()
-        if(::keyboard.isInitialized) { keyboard.cancelSpaceGesture();keyboard.voice(false) }
+        if(::keyboard.isInitialized) { keyboard.dismissPreview();keyboard.cancelSpaceGesture();keyboard.voice(false) }
+    }
+    private fun availableQuick(): List<QuickSuggestion> {
+        if(!::prefs.isInitialized || restricted || prefs.privateMode || !visible)return emptyList()
+        val sms=prefs.flag("otp_sms") && checkSelfPermission(android.Manifest.permission.READ_SMS)==android.content.pm.PackageManager.PERMISSION_GRANTED
+        val notifications=prefs.flag("otp_notifications") && androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
+        return (quickClips.values().filter { if(it.sensitive)prefs.flag("otp_clip",true) else prefs.flag("quick_clip",true) }+
+            OtpInbox.buffer.values().filter { if(it.source=="短信")sms else notifications }).sortedByDescending { it.time }
+    }
+    private fun insertQuick(id: String) {
+        if(state.raw.isNotEmpty() || !visible || availableQuick().none { it.id==id })return
+        val value=quickClips.values().firstOrNull { it.id==id } ?: OtpInbox.buffer.values().firstOrNull { it.id==id } ?: return
+        if(insertLocal(value.text)) { quickClips.consume(id);OtpInbox.buffer.consume(id);activePanel="";keyboard.closePanel();renderCandidates() }
+    }
+    private fun insertLocal(text: String): Boolean {
+        cancelAi();flushDraft();history.clear();cloudBlocked=true;transientField=true;latestText="";undo=null
+        val ok=editor.commit(text);if(!ok)keyboard.status("输入框未接收内容，请重试")
+        return ok
     }
     private fun captureClip(): String? {
+        if(!visible || restricted || !::prefs.isInitialized || prefs.privateMode)return null
         val cm=getSystemService(ClipboardManager::class.java)
-        val description=cm.primaryClipDescription ?: return null
-        if(description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE)==true)return null
-        val text=cm.primaryClip?.getItemAt(0)?.text?.toString()?.takeIf { it.isNotBlank() && it.length<=20000 } ?: return null
-        if(text!=clipLast && prefs.flag("clipboard")) { clipLast=text;LoopApp.background(this,{ PersonalStore.get(this).addClip(text) }) };return text
+        val description=cm.primaryClipDescription ?: run { quickClips.removeSource("剪贴板");return null }
+        if(description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE)==true) { quickClips.removeSource("剪贴板");return null }
+        val text=cm.primaryClip?.getItemAt(0)?.text?.toString()?.takeIf { it.isNotBlank() && it.length<=20000 } ?: run { quickClips.removeSource("剪贴板");return null }
+        val fingerprint=OtpInbox.event("剪贴板",text,0)
+        if(fingerprint!=observedClip) { observedClip=fingerprint;observedClipTime=System.currentTimeMillis() }
+        val time=description.timestamp.takeIf { it>0 } ?: observedClipTime
+        if(prefs.flag("quick_clip",true) || prefs.flag("otp_clip",true))quickClips.offer(OtpInbox.event("剪贴板",text,time),text,"剪贴板",time)
+        LoopApp.main.removeCallbacks(clipExpiry);LoopApp.main.postDelayed(clipExpiry,(time+SuggestionBuffer.TTL+1-System.currentTimeMillis()).coerceIn(1,SuggestionBuffer.TTL+1))
+        if(text!=clipLast && prefs.flag("clipboard") && !QuickText.sensitive(text)) { clipLast=text;LoopApp.background(this,{ PersonalStore.get(this).addClip(text) }) }
+        return text
+    }
+    override fun onKeyDown(keyCode: Int,event: android.view.KeyEvent): Boolean {
+        if(keyCode==android.view.KeyEvent.KEYCODE_BACK && ::keyboard.isInitialized && keyboard.panelOpen) { enqueue(if(activePanel=="tools")"panel_close" else "tools");return true }
+        return super.onKeyDown(keyCode,event)
     }
     private fun showPanel(kind: String) {
-        cancelAi();keyboard.setCandidates(emptyList())
-        if(kind=="tools") {
-            val layouts=if(chinese)listOf((if(nineKey)"切换为 26 键全键盘" else "切换为九宫格") to "layout") else emptyList()
-            val pkg=currentInputEditorInfo?.packageName.orEmpty()
-            val appPrivacy=if(pkg.isNotBlank() && LoopApp.unlocked(this))listOf((if(prefs.localApp(pkg))"此应用：恢复普通输入" else "此应用：始终隐私输入") to "app_privacy") else emptyList()
-            val height=if(LoopApp.unlocked(this))prefs.keyboardHeight else KeyboardHeight.HIGH
-            keyboard.panel("Loop 工具",(listOf("键盘高度：${height.label}" to "height")+layouts+appPrivacy+listOf("语音设置与离线模型" to "speech_settings","设置" to "settings","输入记忆" to "memory","隐私模式" to "privacy","撤销 AI 修改" to "undo","表情" to "emoji","光标左移" to "left","光标右移" to "right")).map { (label,code) -> label to { keyboard.setMode(chinese,symbolsMode);enqueue(code) } });return
-        }
-        if(kind=="height") {
-            val current=if(LoopApp.unlocked(this))prefs.keyboardHeight else KeyboardHeight.HIGH
-            keyboard.panel("键盘高度",KeyboardHeight.entries.map { preset ->
-                (preset.label+if(preset==current)" · 当前" else "") to { enqueue("height:${preset.value}") }
-            });return
-        }
-        if(kind=="emoji") { keyboard.panel("表情",listOf("😀 😄 😊" to { commit("😊");keyboard.setMode(chinese,symbolsMode) },"👍 🙌 🎉" to { commit("👍");keyboard.setMode(chinese,symbolsMode) },"❤️ ✨ 🌿" to { commit("❤️");keyboard.setMode(chinese,symbolsMode) }));return }
-        if(kind=="punctuation") { keyboard.panel("常用标点",listOf("，","。","？","！","、","：","；","……","“","”").map { mark -> mark to { commit(mark);keyboard.setMode(chinese,symbolsMode) } });return }
-        if(restricted || prefs.privateMode) { keyboard.status("隐私输入中不读取记忆或剪贴板");return }
-        val epoch=fieldEpoch;val panel=++panelRevision
-        val current=if(kind=="clipboard")captureClip() else null
-        fun active()=epoch==fieldEpoch && panel==panelRevision && visible && !restricted && !prefs.privateMode
-        fun show(rows: List<String>) {
-            if(!active())return
-            keyboard.panel(if(kind=="clipboard")"剪贴板 · 点击粘贴" else "最近记忆 · 点击插入",rows.distinct().map { value -> value.take(70) to {
-                if(active()) {
-                    // Pasted/retrieved data cannot become cloud context on a later keypress.
-                    cloudBlocked=true;latestText="";flushDraft()
-                    if(editor.commit(value)) { panelRevision++;keyboard.setMode(chinese,symbolsMode);keyboard.status("已插入 · 本输入框后续 AI 已暂停") }
-                    else keyboard.status("输入框未接收文字，请重试")
-                }
-            } })
-        }
-        show(listOfNotNull(current))
-        if(kind=="clipboard" && !prefs.flag("clipboard"))return
-        var rows=emptyList<String>()
-        LoopApp.background(this,{
-            val store=PersonalStore.get(this)
-            rows=if(kind=="clipboard")store.clips().map { it.text } else store.memories(limit=30).map { it.text }
-        }) { error ->
-            if(active()) {
-                if(error==null)show(listOfNotNull(current)+rows)
-                else keyboard.status("历史记录加载失败"+if(current!=null)"，仍可粘贴当前剪贴板" else "，请重试")
+        cancelAi();activePanel=kind
+        val unlocked=LoopApp.unlocked(this)
+        val private=restricted || !unlocked || prefs.privateMode
+        fun act(label: String,code: String,enabled: Boolean=true,selected: Boolean=false)=PanelAction(label,code,enabled=enabled,selected=selected)
+        when(kind) {
+            "tools" -> { val app=currentInputEditorInfo?.packageName.orEmpty()
+                keyboard.tools(ToolCatalog.actions(if(unlocked)prefs.text("tool_order") else ""),listOf(
+                    act(if(unlocked && prefs.privateMode)"全局隐私 · 开启" else "全局隐私 · 关闭","privacy",unlocked,unlocked && prefs.privateMode),
+                    act(if(restricted && (!unlocked || passwordField || currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING)!=0))"字段强制隐私" else if(unlocked && prefs.localApp(app))"此应用 · 隐私" else "此应用 · 跟随全局","app_privacy",unlocked && !passwordField && currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING)==0 && app.isNotBlank(),unlocked && prefs.localApp(app)))) }
+            "height" -> keyboard.actionPanel("键盘高度",KeyboardHeight.entries.map { act(it.label+if(unlocked && prefs.keyboardHeight==it)" · 当前" else "","height:${it.value}",unlocked,unlocked && prefs.keyboardHeight==it) })
+            "layouts" -> keyboard.actionPanel("键盘与快捷入口",listOf(act("九宫格","layout:nine",unlocked,nineKey),act("26 键","layout:full",unlocked,!nineKey),act("单手模式","hand"),act("常用短语","phrases"),act("快捷建议","quick"),act("工具排序 / 手势","keyboard_settings")))
+            "hand" -> keyboard.actionPanel("单手模式",listOf("left" to "靠左","off" to "完整宽度","right" to "靠右").map { (value,label) -> act(label,"hand:$value",unlocked,unlocked && prefs.text("one_hand","off")==value) })
+            "edit" -> keyboard.actionPanel("文本编辑",listOf(act("← 光标","left"),act("光标 →","right"),act("全选","select_all"),act("复制","copy",!private),act("剪切","cut",!private),act("粘贴","paste",!private),act("撤销输入","undo_edit",editor.canUndo),act("撤销 AI","undo",undo!=null),act("常用短语","phrases",!private)))
+            "emoji","punctuation" -> { val marks=if(kind=="emoji")listOf("😀","😄","😊","😂","🥰","👍","🙌","🎉","❤️","✨","🌿","🙏","，","。","？","！","、","：","；","……","“","”") else listOf("，","。","？","！","、","：","；","……","“","”","（","）","《","》","—","·")
+                keyboard.actionPanel(if(kind=="emoji")"表情与符号" else "常用标点",marks.map { act(it,"symbol:$it") },6) }
+            "quick" -> { captureClip();val epoch=fieldEpoch
+                keyboard.cards("快捷建议",availableQuick().map { item -> PanelCard("${item.label} · ${item.source} · ${((System.currentTimeMillis()-item.time)/1000).coerceAtLeast(0)} 秒前",item.text,{ if(epoch==fieldEpoch)enqueue("quick:${item.id}") }) },if(private)"隐私字段不自动读取消息或剪贴板" else "暂无新建议；可复制短信后提取验证码",extra=listOf(act("验证码与快捷建议设置","quick_settings"))) }
+            else -> {
+                if(private) { keyboard.cards("隐私保护",emptyList(),"当前输入框不读取记忆、短语或剪贴板");return }
+                val epoch=fieldEpoch;val revision=panelRevision
+                fun active()=epoch==fieldEpoch && revision==panelRevision && visible && activePanel==kind && !restricted && !prefs.privateMode
+                fun insert(value: String) { if(!active())return;val finish={ if(insertLocal(value)) { activePanel="";keyboard.closePanel();renderCandidates() } };if(state.raw.isNotEmpty())commitRime(finish) else finish() }
+                val title=when(kind) { "phrases"->"常用短语";"clipboard"->"剪贴板";else->"输入记忆" }
+                val current=if(kind=="clipboard")captureClip() else null
+                keyboard.cards(title,listOfNotNull(current?.let { PanelCard("当前剪贴板",it,{ insert(it) }) }),"正在读取…")
+                var cards=listOfNotNull(current?.let { PanelCard("当前剪贴板",it,{ insert(it) }) })
+                LoopApp.background(this,{
+                    val store=PersonalStore.get(this)
+                    cards=when(kind) {
+                        "phrases" -> store.phrases().map { phrase -> PanelCard(phrase.group,phrase.text,{ insert(phrase.text) }) }
+                        "clipboard" -> (listOfNotNull(current?.let { PanelCard("当前剪贴板",it,{ insert(it) }) })+if(prefs.flag("clipboard"))store.clips().filterNot { QuickText.sensitive(it.text) }.map { clip -> PanelCard(if(clip.pinned)"已置顶" else "历史记录",clip.text,{ insert(clip.text) },listOf((if(clip.pinned)"取消置顶" else "置顶") to { if(active())LoopApp.background(this,{ store.clipAction(clip.id,!clip.pinned) }) { if(active())showPanel(kind) } },"删除" to { if(active())LoopApp.background(this,{ store.clipAction(clip.id,null) }) { if(active())showPanel(kind) } })) } else emptyList()).distinctBy { it.text }
+                        else -> store.memories(limit=30).filterNot { QuickText.sensitive(it.text) }.map { PanelCard("最近记忆",it.text,{ insert(it.text) }) }
+                    }
+                }) { error -> if(active())keyboard.cards(title,cards,if(error==null)"暂无内容" else "读取失败，请在数据维护中检查；原数据保留",extra=if(kind=="phrases")listOf(act("添加 / 管理短语","phrase_settings")) else emptyList()) }
             }
         }
     }
     override fun onDestroy() {
         LoopApp.keyboardVisible=false
-        StoreEvents.remove(storeChanged)
+        StoreEvents.remove(storeChanged);OtpInbox.listeners.remove(otpChanged);LoopApp.main.removeCallbacks(suggestionExpiry);LoopApp.main.removeCallbacks(clipExpiry);quickClips.clear()
         stopForNavigation();speech.destroy();unregisterReceiver(screen)
         getSystemService(ClipboardManager::class.java).removePrimaryClipChangedListener(clipboardListener);super.onDestroy()
     }

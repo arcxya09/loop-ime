@@ -26,11 +26,17 @@ class SettingsActivity : Activity() {
     private lateinit var root: LinearLayout
     private lateinit var prefs: Prefs
     private var page="home"
+    private var displayedPage=""
+    private var pageScroll: ScrollView?=null
+    private val backStack=mutableListOf<String>()
+    private val scrollPositions=mutableMapOf<String,Int>()
+    private var returning=false
+    private var phraseQuery=""
     private var backupPassword: CharArray?=null
     private var pendingBackup: Pair<Int,Uri>?=null
     private var backupPrompt: AlertDialog?=null
     private val workDialogs=mutableSetOf<ProgressDialog>()
-    private val green=Color.rgb(23,107,80)
+    private val green get()=UiPalette.green(this@SettingsActivity)
     private var memoryOffset=0
     private var memoryQuery=""
     private var memoryPage=0L
@@ -62,41 +68,56 @@ class SettingsActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         prefs=Prefs(this)
         savedInstanceState?.getString("pending_backup_uri")?.let { pendingBackup=savedInstanceState.getInt("pending_backup_code") to Uri.parse(it) }
-        when(savedInstanceState?.getString("page") ?: intent.getStringExtra("page")) { "updates"->updatesPage();"api"->apiPage();"custom_api"->customApiPage();"speech"->speechPage();"offline_model"->offlineModelPage();"backup"->backupPage();"connection_backup"->connectionBackupPage();"data"->dataPage();"diagnostics"->diagnosticsPage();"database"->databasePage();else->home() }
+        savedInstanceState?.getStringArrayList("back_stack")?.let { backStack.addAll(it) }
+        window.onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT) { backPage() }
+        navigate(savedInstanceState?.getString("page") ?: intent.getStringExtra("page") ?: "home")
         if(intent.getBooleanExtra("microphone",false))requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),10)
     }
     override fun onResume() { super.onResume();LoopApp.main.removeCallbacks(updateUiTick);LoopApp.main.post(updateUiTick);RotationLock(this).recover();modelUiVisible=true;LoopApp.main.removeCallbacks(modelUiTick);LoopApp.main.post(modelUiTick);if(pendingBackup!=null)askBackupPassword() }
     override fun onStop() { LoopApp.main.removeCallbacks(updateUiTick);modelUiVisible=false;LoopApp.main.removeCallbacks(modelUiTick);OfflineModels.pause();super.onStop() }
-    override fun onSaveInstanceState(out: Bundle) { out.putString("page",page);pendingBackup?.let { out.putInt("pending_backup_code",it.first);out.putString("pending_backup_uri",it.second.toString()) };super.onSaveInstanceState(out) }
+    override fun onSaveInstanceState(out: Bundle) { out.putString("page",page);out.putStringArrayList("back_stack",ArrayList(backStack));pendingBackup?.let { out.putInt("pending_backup_code",it.first);out.putString("pending_backup_uri",it.second.toString()) };super.onSaveInstanceState(out) }
     override fun onDestroy() { updateUiRefresh=null;LoopApp.main.removeCallbacks(updateUiTick);backupPassword?.fill('\u0000');backupPassword=null;backupPrompt?.dismiss();backupPrompt=null;workDialogs.forEach { it.dismiss() };workDialogs.clear();screenRevision++;apiTest?.cancel();speechTest?.cancel();modelUiRefresh=null;LoopApp.main.removeCallbacks(modelUiTick);OfflineModels.pause();super.onDestroy() }
+    private fun navigate(destination: String) {
+        when(destination) {
+            "home"->home();"keyboard"->keyboardPage();"assist"->assistPage();"personal"->personalPage();"maintenance"->maintenancePage();"advanced"->advancedPage();"quick"->quickPage();"phrases"->phrasesPage()
+            "updates"->updatesPage();"api"->apiPage();"custom_api"->customApiPage();"speech"->speechPage();"offline_model"->offlineModelPage();"backup"->backupPage();"connection_backup"->connectionBackupPage();"data"->dataPage();"diagnostics"->diagnosticsPage();"database"->databasePage();"memories"->memoryPage();"terms"->termPage();"clipboard"->clipboardPage();else->home()
+        }
+    }
+    private fun backPage() {
+        if(backStack.isEmpty()) { if(page=="home")finish() else { returning=true;home() };return }
+        val target=backStack.removeAt(backStack.lastIndex);returning=true;navigate(target)
+    }
     private fun layout(title: String, subtitle: String) {
+        if(displayedPage.isNotEmpty())scrollPositions[displayedPage]=pageScroll?.scrollY ?: 0
+        if(!returning && displayedPage.isNotEmpty() && displayedPage!=page)backStack.add(displayedPage)
+        val restore=returning;returning=false;displayedPage=page
         updateUiRefresh=null
         screenRevision++;apiTest?.cancel();apiTest=null;speechTest?.cancel();speechTest=null
         modelUiRefresh=null;LoopApp.main.removeCallbacks(modelUiTick);if(page!="offline_model")OfflineModels.pause()
-        root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(dp(22),dp(18),dp(22),dp(32));setBackgroundColor(Color.rgb(245,245,239)) }
-        val scroll=ScrollView(this).apply { isFillViewport=true;addView(root) };setContentView(scroll)
+        root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(dp(22),dp(18),dp(22),dp(32));setBackgroundColor(UiPalette.surface(this@SettingsActivity)) }
+        val scroll=ScrollView(this).apply { isFillViewport=true;addView(root) };pageScroll=scroll;setContentView(scroll);if(restore)scroll.post { scroll.scrollTo(0,scrollPositions[page] ?: 0) }
         scroll.setOnApplyWindowInsetsListener { view,ins -> val b=ins.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime());view.setPadding(b.left,b.top,b.right,b.bottom);ins }
         scroll.requestApplyInsets()
-        if(page!="home")button("← 返回") { home() }
+        if(page!="home")root.addView(TextView(this).apply { text="‹ 返回";textSize=16f;setTextColor(green);gravity=Gravity.CENTER_VERTICAL;isClickable=true;isFocusable=true;setOnClickListener { backPage() } },LinearLayout.LayoutParams(-1,dp(48)))
         label(title,30f,true);label(subtitle,14f);space(14)
     }
     private fun space(n: Int=10) { root.addView(Space(this),LinearLayout.LayoutParams(1,dp(n))) }
     private fun label(s: String,size: Float=15f,bold: Boolean=false): TextView = TextView(this).apply {
-        text=s;textSize=size;setTextColor(if(bold)green else Color.rgb(73,87,76));setLineSpacing(dp(3).toFloat(),1f);if(bold)setTypeface(typeface,Typeface.BOLD)
+        text=s;textSize=size;setTextColor(if(bold)green else UiPalette.ink(this@SettingsActivity));setLineSpacing(dp(3).toFloat(),1f);if(bold)setTypeface(typeface,Typeface.BOLD)
         setTextIsSelectable(true)
         root.addView(this,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(7) })
     }
     private fun button(s: String,action: ()->Unit): Button = Button(this).apply {
         text=s;isAllCaps=false;textSize=15f;setTextColor(green)
-        background=GradientDrawable().apply { setColor(Color.WHITE);cornerRadius=dp(14).toFloat() }
+        background=GradientDrawable().apply { setColor(UiPalette.card(this@SettingsActivity));cornerRadius=dp(14).toFloat() }
         setPadding(dp(15),dp(9),dp(15),dp(9));setOnClickListener { action() }
         root.addView(this,LinearLayout.LayoutParams(-1,dp(53)).apply { topMargin=dp(6);bottomMargin=dp(3) })
     }
     private fun field(title: String,value: String="",password: Boolean=false,multiline: Boolean=false): EditText {
         label(title,13f)
         return EditText(this).apply {
-            setText(value);textSize=16f;setTextColor(Color.rgb(32,44,37));setPadding(dp(12),dp(10),dp(12),dp(10))
-            background=GradientDrawable().apply { setColor(Color.WHITE);cornerRadius=dp(10).toFloat() }
+            setText(value);textSize=16f;setTextColor(UiPalette.ink(this@SettingsActivity));setPadding(dp(12),dp(10),dp(12),dp(10))
+            background=GradientDrawable().apply { setColor(UiPalette.card(this@SettingsActivity));cornerRadius=dp(10).toFloat() }
             inputType=InputType.TYPE_CLASS_TEXT or if(password)InputType.TYPE_TEXT_VARIATION_PASSWORD else if(multiline)InputType.TYPE_TEXT_FLAG_MULTI_LINE else InputType.TYPE_TEXT_VARIATION_NORMAL
             if(password)isSaveEnabled=false
             imeOptions=EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
@@ -137,34 +158,113 @@ class SettingsActivity : Activity() {
         catch(e: java.util.concurrent.RejectedExecutionException) { DiagnosticLog.failure(DiagnosticLog.Area.SETTINGS,e);workDialogs.remove(dialog);dialog.dismiss();message("操作队列繁忙，请稍后重试") }
     }
     private fun home() {
-        page="home";layout("∞ Loop","让输入自然发生。\n实时语音 · 智能纠错 · 持续学习")
+        page="home";layout("∞ Loop","输入、表达与日常快捷操作")
         val imm=getSystemService(InputMethodManager::class.java)
         val enabled=imm.enabledInputMethodList.any { it.packageName==packageName }
-        label(if(enabled)"输入法已启用" else "先完成两步设置",18f,true)
-        button(if(enabled)"1. 管理已启用的输入法" else "1. 启用 Loop 输入法") { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-        button("2. 选择 Loop 输入法") { imm.showInputMethodPicker() }
-        space();label("你的输入空间",18f,true)
-        button("AI 连接与实时纠错") { apiPage() }
-        button("语音输入：百炼云端与离线模型") { speechPage() }
-        button("键盘高度：${prefs.keyboardHeight.label}") {
-            AlertDialog.Builder(this).setTitle("键盘高度")
-                .setSingleChoiceItems(arrayOf("高 · 原有高度","中","低"),prefs.keyboardHeight.ordinal) { dialog,index ->
-                    prefs.keyboardHeight=KeyboardHeight.entries[index];dialog.dismiss();home()
-                }.setNegativeButton("取消",null).show()
+        label(if(enabled)"输入法已启用" else "完成两步即可使用",16f,true)
+        if(!enabled) {
+            button("启用 Loop 输入法") { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+            button("选择 Loop 输入法") { imm.showInputMethodPicker() }
         }
-        button("输入记忆与词库") { dataPage() }
-        button("剪贴板管理") { clipboardPage() }
-        button("备份与恢复") { backupPage() }
-        button("数据库检查与恢复") { databasePage() }
-        button("诊断日志：复制 / 导出") { diagnosticsPage() }
-        space();label("试一下 Loop",18f,true)
-        field("在这里试试拼音、语音或连续输入",multiline=true).apply { hint="你好，Loop。";id=R.id.test_input;imeOptions=EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING }
-        label("此试写框为隐私字段，语音仅本地识别，不进入记忆、不调用云端。测试百炼语音和文本 AI 请使用普通文本框。",12f)
+        button("输入与键盘　›") { keyboardPage() }
+        button("AI 与语音　›") { assistPage() }
+        button("个性化与隐私　›") { personalPage() }
+        button("数据与维护　›") { maintenancePage() }
         val updates=button("软件更新") { updatesPage() }
-        updateUiRefresh={ updates.text=if(AppUpdates.ready(this))"软件更新 · 已下载，点击安装" else AppUpdates.available(this)?.let { "软件更新 · 发现 ${it.version}" } ?: "软件更新" }
-        updateUiRefresh?.invoke()
-        button("关于、开源许可与当前版本") { about() }
-        label("${packageManager.getPackageInfo(packageName,0).versionName} · Android 17+",12f)
+        updateUiRefresh={ updates.text=if(AppUpdates.ready(this))"软件更新 · 点击安装" else AppUpdates.available(this)?.let { "软件更新 · ${it.version}" } ?: "软件更新 · 当前 ${AppUpdates.current(this)}" };updateUiRefresh?.invoke()
+        val sample=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;visibility=View.GONE }
+        button("展开 / 收起试写区") { sample.visibility=if(sample.visibility==View.GONE)View.VISIBLE else View.GONE }
+        val saved=root;root=sample
+        field("试写（仅本地，不记录）",multiline=true).apply { hint="你好，Loop。";id=R.id.test_input;imeOptions=EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING }
+        label("这里不保存记忆、不调用云端。测试云端服务请使用普通输入框。",12f);root=saved;root.addView(sample)
+    }
+    private fun keyboardPage() {
+        page="keyboard";layout("输入与键盘","菜单、布局和手势；各面板保持同档高度")
+        button("中文布局："+if(prefs.flag("chinese_t9",true))"九宫格" else "26 键") {
+            AlertDialog.Builder(this).setTitle("中文布局").setSingleChoiceItems(arrayOf("九宫格","26 键"),if(prefs.flag("chinese_t9",true))0 else 1) { d,i -> prefs.set("chinese_t9",i==0);d.dismiss();keyboardPage() }.show()
+        }
+        button("键盘高度：${prefs.keyboardHeight.label}") { AlertDialog.Builder(this).setTitle("键盘高度").setSingleChoiceItems(arrayOf("高","中","低"),prefs.keyboardHeight.ordinal) { d,i -> prefs.keyboardHeight=KeyboardHeight.entries[i];d.dismiss();keyboardPage() }.show() }
+        button("单手模式：${mapOf("left" to "靠左","right" to "靠右","off" to "关闭")[prefs.text("one_hand","off")]}") { AlertDialog.Builder(this).setTitle("单手模式").setItems(arrayOf("关闭","靠左","靠右")) { _,i -> prefs.set("one_hand",listOf("off","left","right")[i]);keyboardPage() }.show() }
+        toggle("空格横滑移动光标","cursor_gesture",true)
+        label("先横滑进入光标模式；原地按住仍为语音，开始录音后横滑不会移动光标。",12f)
+        label("工具面板快捷项",17f,true)
+        val order=ToolCatalog.order(prefs.text("tool_order"))
+        order.forEachIndexed { index,code -> button("${index+1}. ${ToolCatalog.labels[code]}　更换 / 排序") {
+            val choices=ToolCatalog.labels.keys.toList()
+            AlertDialog.Builder(this).setTitle("第 ${index+1} 项").setItems(choices.map { ToolCatalog.labels.getValue(it) }.toTypedArray()) { _,chosen ->
+                val next=order.toMutableList();val target=choices[chosen];val existing=next.indexOf(target)
+                if(existing>=0)next[existing]=next[index];next[index]=target;prefs.set("tool_order",next.joinToString(","));keyboardPage()
+            }.show()
+        } }
+        button("恢复默认快捷项") { prefs.set("tool_order","");keyboardPage() }
+        button("管理已启用的输入法") { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+        button("切换输入法") { getSystemService(InputMethodManager::class.java).showInputMethodPicker() }
+    }
+    private fun assistPage() {
+        page="assist";layout("AI 与语音","按需启用，连接配置与状态集中管理")
+        button("AI 连接与实时纠错") { apiPage() };button("语音服务与离线模型") { speechPage() };button("验证码与快捷建议") { quickPage() }
+    }
+    private fun personalPage() {
+        page="personal";layout("个性化与隐私","词库学习与主动保存的短语分别管理")
+        button("输入记忆与词库") { dataPage() };button("常用短语") { phrasesPage() };button("剪贴板管理") { clipboardPage() }
+        toggle("隐私模式","private")
+        label("始终隐私的应用",16f,true)
+        prefs.text("local_apps").split('\n').filter { it.isNotBlank() }.forEach { pkg -> button(pkg+" · 移除规则") { confirm("让此应用恢复跟随全局隐私设置？") { prefs.setLocalApp(pkg,false);personalPage() } } }
+        label("在键盘工具面板中可为当前应用开启始终隐私。密码字段等系统限制仍优先。",12f)
+    }
+    private fun maintenancePage() {
+        page="maintenance";layout("数据与维护","加密备份、版本更新与故障处理")
+        button("备份与恢复") { backupPage() };button("软件更新") { updatesPage() };button("高级维护") { advancedPage() };button("关于与开源许可") { about() }
+    }
+    private fun advancedPage() {
+        page="advanced";layout("高级维护","诊断保留原有数据，不自动创建空库")
+        button("数据库检查与恢复") { databasePage() };button("诊断日志") { diagnosticsPage() }
+    }
+    private fun quickPage() {
+        page="quick";layout("验证码与快捷建议","本地提取，点击填入；建议不进入词库或 AI")
+        toggle("复制内容快捷粘贴","quick_clip",true)
+        toggle("从复制文本提取验证码","otp_clip",true)
+        label("消息建议最多保留五分钟，使用后消失；时间窗口不代表验证码实际有效期。系统标记为敏感的剪贴板不读取。",12f)
+        toggle("从新短信提取验证码","otp_sms",explain="仅在解锁且非全局隐私时处理最近五分钟的短信，验证码只在内存保留。需另行允许短信权限，系统可能仍隐藏验证码。")
+        val sms=checkSelfPermission(Manifest.permission.READ_SMS)==PackageManager.PERMISSION_GRANTED
+        label(if(sms)"短信读取权限已允许；验证码正文仍可能被系统保护" else "短信读取权限未允许；复制短信仍可提取",13f)
+        button("申请短信读取与接收权限") { requestPermissions(arrayOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS),12) }
+        toggle("从指定应用通知提取验证码","otp_notifications",explain="需要系统通知访问授权；仅处理下方指定应用。系统可能隐藏验证码，授权不保证能读取。通知正文不保存、不上传。")
+        val packages=field("通知来源包名（每行一个）",prefs.text("otp_packages",android.provider.Telephony.Sms.getDefaultSmsPackage(this).orEmpty()),multiline=true)
+        button("保存通知来源") { val values=packages.text.toString().lines().map(String::trim).filter { it.isNotEmpty() }.distinct()
+            if(values.size>20 || values.any { !it.matches(Regex("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+")) })message("请输入有效包名，每行一个，最多 20 个") else { prefs.set("otp_packages",values.joinToString("\n"));OtpInbox.clear();message("通知来源已保存") }
+        }
+        button("打开系统通知访问设置") { try { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) } catch(_: ActivityNotFoundException) { message("本机未提供通知访问设置入口，可使用剪贴板提取") } }
+        label("短信与通知能力取决于 Android / 厂商保护，不要求关闭系统验证码保护。密码及强制隐私字段不会自动读取消息。",12f)
+        button("清除当前临时验证码") { OtpInbox.clear();message("已清除内存中的验证码建议") }
+    }
+    private fun phrasesPage() {
+        page="phrases";layout("常用短语","主动收藏，分组保存于本机加密数据库")
+        val q=field("搜索内容或分组",phraseQuery)
+        button("搜索短语") { phraseQuery=q.text.toString();phrasesPage() }
+        button("添加短语") { editPhrase(null) }
+        val revision=screenRevision
+        LoopApp.background(this,{
+            val rows=PersonalStore.get(this).phrases(phraseQuery)
+            runOnUiThread { if(page=="phrases" && revision==screenRevision) {
+                if(rows.isEmpty())label("暂无短语，添加后可在键盘的布局菜单或自定义快捷项中使用。",13f)
+                rows.forEach { phrase -> button("${phrase.group} · ${phrase.text.take(60)}") { editPhrase(phrase) } }
+            } }
+        }) { error -> if(error!=null && revision==screenRevision)message("短语读取失败，原数据保留，请到高级维护检查") }
+    }
+    private fun editPhrase(phrase: Phrase?) {
+        val form=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(dp(20),0,dp(20),0) }
+        val group=EditText(this).apply { hint="分组";setText(phrase?.group ?: "常用");isSaveEnabled=false }
+        val text=EditText(this).apply { hint="短语内容";setText(phrase?.text.orEmpty());minLines=3;isSaveEnabled=false;imeOptions=EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING }
+        form.addView(group);form.addView(text)
+        val dialog=AlertDialog.Builder(this).setTitle(if(phrase==null)"添加短语" else "编辑短语").setView(form).setPositiveButton("保存",null).setNegativeButton("取消",null)
+        if(phrase!=null)dialog.setNeutralButton("删除") { _,_->confirm("删除这条常用短语？") { LoopApp.background(this,{ PersonalStore.get(this).deletePhrase(phrase.id) }) { phrasesPage() } } }
+        val shown=dialog.create();shown.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE);shown.show()
+        shown.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val body=text.text.toString();val category=group.text.toString()
+            if(body.isBlank() || body.length>2000 || category.length>40 || QuickText.sensitive(body)) { text.error="内容需 1–2000 字，分组最多 40 字，不能保存验证码消息";return@setOnClickListener }
+            LoopApp.background(this,{ PersonalStore.get(this).savePhrase(phrase?.id ?: java.util.UUID.randomUUID().toString(),body,category) }) { error -> if(error==null) { shown.dismiss();phrasesPage() } else text.error="保存失败，原数据保留" }
+        }
     }
     private fun updatesPage() {
         page="updates";layout("软件更新","当前版本 ${AppUpdates.current(this)}\n从 arcxya09/loop-ime 的 GitHub Release 获取更新")
@@ -551,7 +651,7 @@ class SettingsActivity : Activity() {
         })
     }
     private fun backupPage() {
-        page="backup";layout("备份与恢复","使用独立密码加密。包含记忆、词库、来源关系与剪贴板，不包含 API Key。")
+        page="backup";layout("备份与恢复","使用独立密码加密。包含记忆、词库、来源关系、剪贴板及常用短语，不包含 API Key。")
         label("请妥善保存密码。卸载应用会删除本地加密密钥和数据，只有备份密码可以恢复导出的备份。",14f)
         val password=field("备份密码（至少 8 位）",password=true)
         label("可先预览新增、合并与跳过的记录数量。恢复按片段更新时间选取较新文本；词频跟随选中的片段版本，云端权限取更严格的一方。",13f)
@@ -580,6 +680,7 @@ class SettingsActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int,permissions: Array<out String>,grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode,permissions,grantResults)
         val granted=grantResults.firstOrNull()==PackageManager.PERMISSION_GRANTED
+        if(requestCode==12) { quickPage();return }
         if(requestCode==11)DiagnosticLog.event(DiagnosticLog.Area.CONTACTS_PERMISSION,DiagnosticLog.Step.PERMISSION,"permission_granted" to if(granted)1L else 0L)
         if(requestCode==11 && granted)importContacts() else message(if(granted)"权限已允许，回到键盘即可开始语音。" else "未获授权，相关功能保持关闭。")
     }

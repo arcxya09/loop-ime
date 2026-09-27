@@ -16,8 +16,12 @@ class SafeEditor(private val connection: ()->InputConnection?) {
     private var composeStart=-1
     private var composeEnd=-1
     private var replacedSelection=""
+    private data class OwnedUndo(val inserted: String,val replaced: String,val revision: Long,val generation: Long)
+    private var ownedUndo: OwnedUndo?=null
+    val canUndo get()=ownedUndo?.let { u -> u.revision==revision && u.generation==generation && owner.isEmpty() && connection()?.let { range(it)==(cursor to cursor) }==true }==true
+    fun undoLast(): Boolean { val u=ownedUndo ?: return false;ownedUndo=null;return patch(u.inserted,u.replaced,u.revision,u.generation) }
     private val expected=ArrayDeque<Pair<Int,Long>>()
-    fun start(initial: Int) { generation++;revision++;cursor=initial;selectionEnd=initial;owner="";composition="";composeStart=-1;composeEnd=-1;replacedSelection="";expected.clear();lastEdit=null }
+    fun start(initial: Int) { generation++;revision++;cursor=initial;selectionEnd=initial;owner="";composition="";composeStart=-1;composeEnd=-1;replacedSelection="";expected.clear();lastEdit=null;ownedUndo=null }
     private fun expect(p: Int) { cursor=p;selectionEnd=p;if(p>=0)expected.add(p to SystemClock.uptimeMillis());while(expected.size>64)expected.removeFirst() }
     private fun range(ic: InputConnection): Pair<Int,Int> {
         val s=ic.getSurroundingText(0,0,0)
@@ -38,8 +42,10 @@ class SafeEditor(private val connection: ()->InputConnection?) {
         val ic=connection() ?: return false
         val bounds=if(owner.isNotEmpty())composeStart to composeEnd else range(ic)
         val start=bounds.first
+        val replaced=if(owner.isNotEmpty())replacedSelection else ic.getSelectedText(0)?.toString().orEmpty()
         val ok=ic.commitText(text,1)
         if(ok) { lastEdit=TextEdit(start,bounds.second,text);revision++;owner="";composition="";composeStart=-1;composeEnd=-1;replacedSelection="";expect(if(start<0)-1 else start+text.length) }
+        if(ok)ownedUndo=if(start>=0 && text.length<=4096 && replaced.length<=4096)OwnedUndo(text,replaced,revision,generation) else null
         return ok
     }
     fun sealVoice(head: String, tail: String): Boolean {
@@ -68,6 +74,8 @@ class SafeEditor(private val connection: ()->InputConnection?) {
             val start=if(bounds.first<0)-1 else if(selected.isNullOrEmpty())maxOf(0,bounds.first-count) else bounds.first
             lastEdit=if(start>=0)TextEdit(start,bounds.second,"") else null
             revision++;expected.clear();expect(start)
+            val removed=selected?.toString()?.takeIf { it.isNotEmpty() } ?: before.takeLast(count)
+            ownedUndo=if(start>=0 && removed.isNotEmpty() && removed.length<=4096)OwnedUndo("",removed,revision,generation) else null
         }
         return ok
     }
