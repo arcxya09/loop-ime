@@ -178,11 +178,20 @@ class KeyboardInteractionTest {
         assertEquals(listOf("voice_hold_start","voice_hold_end"),events)
     }
     @Test fun movementBeforeThresholdCancelsTapButMovementWhileHoldingStillEndsOnUp()=withKeyboard { k,events ->
+        k.setCursorGesture(false)
         var s=all(k).filterIsInstance<HoldSpaceKey>().single()
         touch(s,MotionEvent.ACTION_DOWN);touch(s,MotionEvent.ACTION_MOVE,-1000f);waitHold();touch(s,MotionEvent.ACTION_UP)
         assertTrue(events.isEmpty())
         s=all(k).filterIsInstance<HoldSpaceKey>().single()
         touch(s,MotionEvent.ACTION_DOWN);waitHold();touch(s,MotionEvent.ACTION_MOVE,-1000f);touch(s,MotionEvent.ACTION_UP,-1000f)
+        assertEquals(listOf("voice_hold_start","voice_hold_end"),events)
+    }
+    @Test fun horizontalSpaceGestureMovesCursorWithoutVoiceOrSpaceAndCanBeDisabled()=withKeyboard { k,events ->
+        k.setCursorGesture(true)
+        val s=all(k).filterIsInstance<HoldSpaceKey>().single()
+        touch(s,MotionEvent.ACTION_DOWN);touch(s,MotionEvent.ACTION_MOVE,-120f);waitHold();touch(s,MotionEvent.ACTION_UP,-120f)
+        assertTrue(events.isNotEmpty());assertTrue(events.all { it=="left" })
+        events.clear();touch(s,MotionEvent.ACTION_DOWN);waitHold();touch(s,MotionEvent.ACTION_MOVE,-120f);touch(s,MotionEvent.ACTION_UP,-120f)
         assertEquals(listOf("voice_hold_start","voice_hold_end"),events)
     }
     @Test fun secondFingerStopsHoldWithoutActivatingAnotherKey()=withKeyboard { k,events ->

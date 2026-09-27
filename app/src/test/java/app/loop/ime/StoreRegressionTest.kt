@@ -13,6 +13,20 @@ import org.robolectric.annotation.SQLiteMode
 @Config(sdk=[37],application=Application::class)
 @SQLiteMode(SQLiteMode.Mode.NATIVE)
 class StoreRegressionTest {
+    @Test fun phrasesMigrateReopenBackupAndPreserveLocalConflictsWithoutLearning()=StoreFixture().use { f ->
+        f.store.savePhrase("p1","周六下午三点见","日常")
+        assertEquals("日常",f.store.phrases("周六").single().group)
+        assertTrue(f.store.terms().isEmpty());assertTrue(f.store.memories().isEmpty())
+        assertEquals("周六下午三点见",PersonalStore(f.database).phrases().single().text)
+        f.store.addClip("验证码 001234");assertTrue(f.store.clips().isEmpty())
+        val rows=mutableListOf<JSONObject>();f.store.exportRows(rows::add)
+        StoreFixture().use { other ->
+            other.store.importRows(rows.asSequence());assertEquals(f.store.phrases(),other.store.phrases())
+            other.store.savePhrase("p1","本机修改的回复","工作")
+            other.store.importRows(rows.asSequence());assertEquals("本机修改的回复",other.store.phrases().single().text)
+            other.store.deletePhrase("p1");assertTrue(other.store.phrases().isEmpty())
+        }
+    }
     @Test fun futureChoiceAndBackupTimesNeverBecomeFreshLearningOnImport()=StoreFixture().use { f ->
         val future=System.currentTimeMillis()+365*CandidateRanking.DAY
         f.store.applyDraft(DraftSnapshot("future","事实","choice",false,false,1,100,listOf(LearnedChoice("事实","shishi",false,1,future,contexts=mapOf("这是" to 1)))))

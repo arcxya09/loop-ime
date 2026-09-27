@@ -13,12 +13,13 @@ import android.view.*
 import android.widget.*
 
 class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c) {
-    private val green=0xff286952.toInt()
-    private val surface=ImeAppearance.SURFACE
-    private val secondary=0xffe0e5ea.toInt()
-    private val mint=0xffdfece5.toInt()
-    private val ink=0xff343d48.toInt()
-    private val muted=0xff7b8590.toInt()
+    private val green=UiPalette.green(c)
+    private val surface=UiPalette.surface(c)
+    private val keySurface=UiPalette.card(c)
+    private val secondary=UiPalette.secondary(c)
+    private val mint=UiPalette.mint(c)
+    private val ink=UiPalette.ink(c)
+    private val muted=UiPalette.muted(c)
     private val status=TextView(c)
     private val preedit=TextView(c)
     private val notice=TextView(c)
@@ -55,6 +56,14 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         }
     }
     private val body=LinearLayout(c)
+    private val panelHeader=LinearLayout(c)
+    private lateinit var toolbar: LinearLayout
+    var panelOpen=false;private set
+    private var hand="off"
+    private var inputKind="text"
+    private var previewDialog: android.app.AlertDialog?=null
+    fun dismissPreview() { previewDialog?.dismiss();previewDialog=null }
+    private var gestureEnabled=true
     private val content=FrameLayout(c)
     private val expandedWords=CandidateFlowLayout(c)
     private val expandedScroll=object: ScrollView(c) {
@@ -97,7 +106,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     init {
         orientation=VERTICAL;layoutDirection=View.LAYOUT_DIRECTION_LTR
         setBackgroundColor(surface);setPadding(dp(6),dp(4),dp(6),dp(6));isFocusable=false
-        val toolbar=LinearLayout(c).apply { gravity=Gravity.CENTER_VERTICAL;tag="keyboard_toolbar" }
+        toolbar=LinearLayout(c).apply { gravity=Gravity.CENTER_VERTICAL;tag="keyboard_toolbar" }
         fun tool(code: String,description: String,action: ()->Unit): KeyboardIcon {
             val v=icon(code,description,Color.TRANSPARENT,action)
             toolbarButtons+=v
@@ -132,6 +141,8 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         micButton=tool("mic","语音输入") { key("mic") }
         tool("hide","收起键盘") { key("hide") }
         addView(toolbar,LayoutParams(-1,dp(44)))
+        panelHeader.gravity=Gravity.CENTER_VERTICAL;panelHeader.tag="panel_header";panelHeader.visibility=GONE
+        addView(panelHeader,LayoutParams(-1,dp(44)))
         cloudRow.tag="cloud_predictions";cloudRow.gravity=Gravity.CENTER_VERTICAL;cloudRow.visibility=GONE
         cloudRow.addView(TextView(c).apply { text="AI";setTextColor(muted);labelStyle(this,11);gravity=Gravity.CENTER },LayoutParams(dp(28),-1))
         cloudRow.addView(cloudCandidates,LayoutParams(-2,-1))
@@ -154,7 +165,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         }
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow();requestApplyInsets() }
-    override fun onDetachedFromWindow() { removeCallbacks(clearNotice);removeCallbacks(clearAiMessage);showNotice=false;clearAiMessage.run();super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { dismissPreview();removeCallbacks(clearNotice);removeCallbacks(clearAiMessage);showNotice=false;clearAiMessage.run();super.onDetachedFromWindow() }
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if(event.actionMasked==MotionEvent.ACTION_DOWN)discardMultiTouch=false
         if(event.actionMasked==MotionEvent.ACTION_POINTER_DOWN && spaceKey?.tracking==true) { discardMultiTouch=true;cancelSpaceGesture() }
@@ -167,7 +178,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     private fun dp(x: Int)=(x*resources.displayMetrics.density).toInt()
     private fun bg(color: Int,radius: Int=9)=GradientDrawable().apply { setColor(color);cornerRadius=dp(radius).toFloat() }
     private fun keyBg(color: Int,radius: Int=9)=StateListDrawable().apply {
-        addState(intArrayOf(android.R.attr.state_pressed),bg(0xffd1e2d9.toInt(),radius))
+        addState(intArrayOf(android.R.attr.state_pressed),bg(if(UiPalette.dark(context))mint else 0xffd1e2d9.toInt(),radius))
         addState(intArrayOf(),bg(color,radius))
     }
     private fun labelStyle(v: TextView,maxSize: Int,minSize: Int=maxSize-3) {
@@ -176,7 +187,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         v.setAutoSizeTextTypeUniformWithConfiguration(minSize.coerceAtLeast(8),maxSize,1,TypedValue.COMPLEX_UNIT_DIP)
         v.typeface=Typeface.create("sans-serif",Typeface.NORMAL)
     }
-    private fun button(label: String,size: Int=17,color: Int=Color.WHITE,action: ()->Unit): TextView = TextView(context).apply {
+    private fun button(label: String,size: Int=17,color: Int=keySurface,action: ()->Unit): TextView = TextView(context).apply {
         text=label;contentDescription=label;labelStyle(this,size);gravity=Gravity.CENTER;setTextColor(ink);background=keyBg(color)
         setPadding(dp(4),0,dp(4),0);isClickable=true;isFocusable=false
         setOnClickListener { performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);action() }
@@ -185,10 +196,10 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         tag=code;contentDescription=description;tint=ink;background=keyBg(color)
         setOnClickListener { performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);action() }
     }
-    private fun action(label: String,code: String,size: Int=17,color: Int=Color.WHITE): TextView = button(label,size,color) { press(code) }.apply { tag=code }
+    private fun action(label: String,code: String,size: Int=17,color: Int=keySurface): TextView = button(label,size,color) { press(code) }.apply { tag=code }
     private fun alternate(label: String,code: String,other: String,size: Int=17): TextView = AlternateKey(context,other) { press("literal:$other") }.apply {
         text=label;tag=code;contentDescription="$label，长按输入 $other";labelStyle(this,size)
-        gravity=Gravity.CENTER;setTextColor(ink);background=keyBg(Color.WHITE);setPadding(dp(4),dp(2),dp(4),0);isFocusable=false
+        gravity=Gravity.CENTER;setTextColor(ink);background=keyBg(keySurface);setPadding(dp(4),dp(2),dp(4),0);isFocusable=false
         setOnClickListener { performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);press(code) }
     }
     private fun candidateMenu(anchor: View) {
@@ -209,8 +220,8 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     }
     private fun space(): HoldSpaceKey=HoldSpaceKey(context,
         { active -> key(if(active)"voice_hold_start" else "voice_hold_end") },
-        { if(pendingRender)render() }, { key("mic") }).apply {
-        text="按住说话";labelStyle(this,11,9);gravity=Gravity.CENTER;setTextColor(muted);background=keyBg(Color.WHITE);isFocusable=false
+        { if(pendingRender)render() }, { key("mic") }, { left -> if(gestureEnabled)key(if(left)"left" else "right") }, { gestureEnabled }).apply {
+        text="按住说话";labelStyle(this,11,9);gravity=Gravity.CENTER;setTextColor(muted);background=keyBg(keySurface);isFocusable=false
         setPadding(dp(4),0,dp(4),0)
         setOnClickListener { performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);if(isVoice)key("mic") else press("space") }
         spaceKey=this
@@ -219,6 +230,8 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     private fun isIdleHint(s: String)=s.startsWith("简体九宫格 ·") || s.startsWith("简体全键盘 ·") ||
         s.startsWith("简体拼音已就绪") || s=="拼音已就绪" || s=="英文 · 长按空格说话" || s.startsWith("长按空格说话")
     private fun updateStrip() {
+        toolbar.visibility=if(panelOpen)GONE else VISIBLE
+        panelHeader.visibility=if(panelOpen)VISIBLE else GONE
         status.text=if(showNotice)statusText else modeName()
         status.contentDescription=statusText
         val showCandidates=hasCandidates && !isVoice
@@ -275,7 +288,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         if(active) { composing=false;compositionText="" }
         // Keep the same keyboard, space view, and height throughout both recording gestures.
         micButton.glyph=if(active)"stop" else "mic";micButton.contentDescription=if(active)"结束语音" else "语音输入"
-        micButton.tint=if(active)Color.WHITE else green;micButton.background=keyBg(if(active)green else mint,21)
+        micButton.tint=if(active)0xffffffff.toInt() else green;micButton.background=keyBg(if(active)green else mint,21)
         clipButton.glyph=if(active)"cancel" else "clipboard";clipButton.contentDescription=if(active)"取消语音尾句" else "剪贴板";clipButton.invalidate()
         if(spaceKey?.holding!=true)spaceKey?.text=if(active)"结束语音" else "按住说话"
         spaceKey?.setTextColor(if(active)green else muted)
@@ -353,8 +366,10 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     private fun render() {
         if(spaceKey?.tracking==true) { pendingRender=true;return }
         pendingRender=false;spaceKey=null;body.removeAllViews()
+        panelOpen=false;dismissPreview()
+        applyHand()
         content.layoutParams=LayoutParams(-1,dp(heightPreset.padDp+4))
-        if(chinese && nineKey && !symbols)renderNineKey() else renderFullKeys()
+        if(symbols && inputKind in setOf("number","phone","decimal","date"))renderNumeric() else if(chinese && nineKey && !symbols)renderNineKey() else renderFullKeys()
         if(expanded)setExpanded(false)
         updateStrip()
     }
@@ -404,8 +419,8 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             row(listOf("⇧" to "shift")+"zxcvbnm".map { (if(shift)it.uppercaseChar() else it).toString() to (if(shift)it.uppercaseChar() else it).toString() }+listOf("⌫" to "delete"))
         }
         val bottom=LinearLayout(context)
-        for((label,code) in listOf((if(symbols)"ABC" else "123") to "symbols",(if(chinese)"，" else ",") to "comma","空格" to "space",(if(chinese)"。" else ".") to "period",(if(chinese)"中/英" else "英/中") to "language",enterLabel to "enter")) {
-            val v=if(code=="space")space() else action(label,code,12,if(code=="enter")mint else Color.WHITE)
+        for((label,code) in listOf((if(symbols)"ABC" else "123") to "symbols",(if(inputKind=="email")"@" else if(inputKind=="url")"/" else if(chinese)"，" else ",") to (if(inputKind=="email")"literal:@" else if(inputKind=="url")"literal:/" else "comma"),"空格" to "space",(if(chinese)"。" else ".") to "period",(if(chinese)"中/英" else "英/中") to "language",enterLabel to "enter")) {
+            val v=if(code=="space")space() else action(label,code,12,if(code=="enter")mint else keySurface)
             bottom.addView(v,LayoutParams(0,-1,if(code=="space")3.5f else 1.2f).apply { setMargins(dp(2),0,dp(2),0) })
         };addFullRow(bottom)
     }
@@ -427,13 +442,98 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         if(code=="shift") { shift=!shift;render();return }
         key(code)
     }
-    fun panel(title: String,entries: List<Pair<String,()->Unit>>) {
-        composing=false;compositionText=""
-        cancelSpaceGesture();spaceKey=null;body.removeAllViews();clearCandidates();status(title)
-        content.layoutParams=LayoutParams(-1,dp(heightPreset.padDp+4))
+    fun setInputKind(kind: String) { inputKind=kind;render() }
+    fun setHand(value: String) { hand=value.takeIf { it in setOf("left","right") } ?: "off";applyHand() }
+    fun setCursorGesture(enabled: Boolean) { gestureEnabled=enabled }
+    private fun applyHand() {
+        val width=resources.displayMetrics.widthPixels
+        val inset=if(!panelOpen && hand!="off")minOf((width*.18f).toInt(),dp(84)) else 0
+        body.setPadding(if(hand=="right")inset else 0,0,if(hand=="left")inset else 0,0)
+    }
+    private fun renderNumeric() {
+        val decimal=if(inputKind=="phone")"+" else if(inputKind=="date")"/" else "."
+        listOf(listOf("1","2","3","delete"),listOf("4","5","6","-"),listOf("7","8","9",decimal),listOf("symbols","0","space","enter")).forEach { codes ->
+            val row=LinearLayout(context)
+            codes.forEach { code -> val v=when(code) { "delete"->deleteKey();"space"->action("空格",code,13);"enter"->action(enterLabel,code,13,mint);"symbols"->action("ABC",code,13);else->action(code,code) }
+                row.addView(v,LayoutParams(0,-1,1f).apply { setMargins(dp(2),0,dp(2),0) }) }
+            addFullRow(row)
+        }
+    }
+    fun closePanel() { render() }
+    private fun beginPanel(title: String,back: String) {
+        dismissPreview()
+        cancelSpaceGesture();spaceKey=null;setExpanded(false);panelOpen=true;body.removeAllViews();applyHand()
+        content.layoutParams=LayoutParams(-1,dp(heightPreset.padDp+4));panelHeader.removeAllViews()
+        panelHeader.addView(button("‹",26,Color.TRANSPARENT) { key(back) }.apply { contentDescription=if(back=="panel_close")"返回键盘" else "返回工具面板" },LayoutParams(dp(48),-1))
+        panelHeader.addView(TextView(context).apply { text=title;textSize=14f;setTextColor(ink);gravity=Gravity.CENTER_VERTICAL;setSingleLine();ellipsize=TextUtils.TruncateAt.END },LayoutParams(0,-1,1f))
+        if(back!="panel_close")panelHeader.addView(button("⌨",20,Color.TRANSPARENT) { key("panel_close") }.apply { contentDescription="返回键盘" },LayoutParams(dp(48),-1))
+        else panelHeader.addView(icon("settings","全部设置",Color.TRANSPARENT) { key("settings") },LayoutParams(dp(48),-1))
+        updateStrip()
+    }
+    fun tools(actions: List<PanelAction>,privacy: List<PanelAction>) {
+        beginPanel("Loop 工具","panel_close")
+        val large=resources.configuration.fontScale>1.15f || resources.configuration.screenWidthDp<340
+        val columns=if(large)3 else 4
         val list=LinearLayout(context).apply { orientation=VERTICAL }
-        entries.forEach { (label,choose) -> list.addView(button(label,14) { choose() }.apply { setPadding(dp(12),0,dp(12),0);gravity=Gravity.CENTER_VERTICAL },LayoutParams(-1,dp(43)).apply { topMargin=dp(4) }) }
-        body.addView(ScrollView(context).apply { addView(list) },LayoutParams(-1,dp(heightPreset.padDp-44)))
-        body.addView(button("返回键盘",13,secondary) { render();key("panel_close") },LayoutParams(-1,dp(40)).apply { topMargin=dp(4) })
+        val scroll=ScrollView(context).apply { isFillViewport=true;addView(list) }
+        body.addView(scroll,LayoutParams(-1,0,1f))
+        val tileHeight=if(large)dp(68) else (dp(heightPreset.padDp+4)-dp(64))/2
+        actions.chunked(columns).forEach { items ->
+            val row=LinearLayout(context)
+            items.forEach { a ->
+                val tile=LinearLayout(context).apply { orientation=VERTICAL;gravity=Gravity.CENTER;background=keyBg(keySurface,12);tag="tool:"+a.code;contentDescription=a.label;isClickable=true;isFocusable=true;isEnabled=a.enabled
+                    setOnClickListener { key(a.code) }
+                    addView(KeyboardIcon(context,a.icon).apply { tint=green;isClickable=false;importantForAccessibility=IMPORTANT_FOR_ACCESSIBILITY_NO },LayoutParams(dp(24),dp(24)))
+                    addView(TextView(context).apply { text=a.label;textSize=11f;setTextColor(ink);gravity=Gravity.CENTER;importantForAccessibility=IMPORTANT_FOR_ACCESSIBILITY_NO },LayoutParams(-1,-2)) }
+                row.addView(tile,LayoutParams(0,-1,1f).apply { setMargins(dp(2),dp(2),dp(2),dp(2)) })
+            }
+            repeat(columns-items.size) { row.addView(Space(context),LayoutParams(0,1,1f)) }
+            list.addView(row,LayoutParams(-1,tileHeight+dp(4)))
+        }
+        val footer=LinearLayout(context)
+        privacy.forEach { a -> footer.addView(panelButton(a),LayoutParams(0,dp(48),1f).apply { setMargins(dp(2),dp(4),dp(2),dp(4)) }) }
+        body.addView(footer,LayoutParams(-1,dp(56)))
+    }
+    private fun panelButton(a: PanelAction): TextView=button(a.label,14,if(a.selected)mint else keySurface) { key(a.code) }.apply {
+        tag="panel:"+a.code;isEnabled=a.enabled;alpha=if(a.enabled)1f else .45f;isFocusable=true
+        setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE);textSize=13f;setSingleLine(false);maxLines=3
+        contentDescription=a.label+if(a.selected)"，已选中" else "";isSelected=a.selected
+    }
+    fun actionPanel(title: String,actions: List<PanelAction>,columns: Int=3,back: String="tools") {
+        beginPanel(title,back)
+        val list=LinearLayout(context).apply { orientation=VERTICAL }
+        val actual=if(resources.configuration.fontScale>1.3f)minOf(2,columns) else columns
+        actions.chunked(actual).forEach { items ->
+            val row=LinearLayout(context)
+            items.forEach { a -> row.addView(panelButton(a),LayoutParams(0,dp(if(resources.configuration.fontScale>1.3f)72 else 52),1f).apply { setMargins(dp(2),dp(2),dp(2),dp(2)) }) }
+            repeat(actual-items.size) { row.addView(Space(context),LayoutParams(0,1,1f)) };list.addView(row)
+        }
+        body.addView(ScrollView(context).apply { addView(list) },LayoutParams(-1,-1))
+    }
+    fun cards(title: String,cards: List<PanelCard>,empty: String="暂无内容",back: String="tools",extra: List<PanelAction> = emptyList()) {
+        beginPanel(title,back)
+        val list=LinearLayout(context).apply { orientation=VERTICAL }
+        extra.forEach { list.addView(panelButton(it),LayoutParams(-1,dp(48)).apply { bottomMargin=dp(4) }) }
+        if(cards.isEmpty())list.addView(TextView(context).apply { text=empty;textSize=14f;setTextColor(muted);setPadding(dp(12),dp(12),dp(12),dp(12)) })
+        cards.forEach { card ->
+            val box=LinearLayout(context).apply { orientation=VERTICAL;background=bg(keySurface,12);setPadding(dp(10),dp(4),dp(10),dp(4)) }
+            box.addView(TextView(context).apply { text=card.title;textSize=11f;setTextColor(muted) })
+            box.addView(button(card.text,15) { key("preview_unused") }.apply {
+                setOnClickListener { dismissPreview();val dialog=android.app.AlertDialog.Builder(context).setTitle(card.title).setMessage(card.text).setPositiveButton("插入") { _,_->card.insert() }.setNegativeButton("关闭",null).create()
+                    previewDialog=dialog;dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG);dialog.window?.attributes=dialog.window?.attributes?.apply { token=windowToken };dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE);dialog.show() }
+                setSingleLine(false);maxLines=2;setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE);textSize=15f;gravity=Gravity.CENTER_VERTICAL
+                contentDescription="预览："+card.text
+            },LayoutParams(-1,dp(56)))
+            val actions=LinearLayout(context)
+            (listOf("插入" to card.insert)+card.actions).forEach { (label,action) -> actions.addView(button(label,13,secondary,action),LayoutParams(0,dp(48),1f).apply { setMargins(dp(2),dp(2),dp(2),dp(2)) }) }
+            box.addView(actions);list.addView(box,LayoutParams(-1,-2).apply { bottomMargin=dp(6) })
+        }
+        body.addView(ScrollView(context).apply { addView(list) },LayoutParams(-1,-1))
+    }
+    fun panel(title: String,entries: List<Pair<String,()->Unit>>) {
+        beginPanel(title,"panel_close")
+        val list=LinearLayout(context).apply { orientation=VERTICAL }
+        entries.forEach { (label,choose) -> list.addView(button(label,14,keySurface,choose),LayoutParams(-1,dp(52)).apply { topMargin=dp(4) }) }
+        body.addView(ScrollView(context).apply { addView(list) },LayoutParams(-1,-1))
     }
 }

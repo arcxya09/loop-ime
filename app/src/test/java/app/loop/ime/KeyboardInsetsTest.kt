@@ -59,6 +59,7 @@ class KeyboardInsetsTest {
         val controller=Robolectric.buildActivity(SettingsActivity::class.java).setup()
         try {
             val activity=controller.get()
+            all(activity.window.decorView).filterIsInstance<Button>().single { it.text.toString()=="AI 与语音　›" }.performClick()
             all(activity.window.decorView).filterIsInstance<Button>().single { it.text.toString()=="AI 连接与实时纠错" }.performClick()
             val fields=all(activity.window.decorView).filterIsInstance<EditText>()
             assertEquals(1,fields.size);assertEquals(R.id.api_key,fields.single().id)

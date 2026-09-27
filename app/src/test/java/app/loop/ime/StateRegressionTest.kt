@@ -20,6 +20,15 @@ import org.robolectric.util.ReflectionHelpers.ClassParameter
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[37],application=Application::class)
 class StateRegressionTest {
+    @Test fun ownedUndoRestoresInsertDeleteAndRefusesAnExternalEdit() {
+        val text=SpannableStringBuilder().apply { Selection.setSelection(this,0) }
+        val ic=object: BaseInputConnection(View(RuntimeEnvironment.getApplication()),true) { override fun getEditable(): Editable=text }
+        val editor=SafeEditor { ic };editor.start(0)
+        assertTrue(editor.commit("你好"));assertTrue(editor.canUndo);assertTrue(editor.undoLast());assertEquals("",text.toString())
+        editor.commit("😀");editor.delete();assertEquals("",text.toString());assertTrue(editor.undoLast());assertEquals("😀",text.toString())
+        editor.commit("AB");Selection.setSelection(text,0);editor.selection(0,0,-1,-1)
+        assertFalse(editor.canUndo);assertFalse(editor.undoLast());assertEquals("😀AB",text.toString())
+    }
     @Test fun perAppPrivacyPersistsAndDoesNotMatchPackagePrefixes() {
         val context=RuntimeEnvironment.getApplication();val prefs=Prefs(context)
         prefs.setLocalApp("app.private",true)
