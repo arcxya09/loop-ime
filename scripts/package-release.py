@@ -25,6 +25,17 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def validate_signature_report(report, require_all_schemes=False):
+    """Require the original single signer; compatibility checks must verify v1, v2 and v3."""
+    certificates = re.findall(r'^.*certificate SHA-256 digest: ([0-9a-f]{64})\s*$', report, re.M)
+    if not certificates or set(certificates) != {SIGNER} or not re.search(r'^Number of signers: 1\s*$', report, re.M):
+        raise ValueError('APK signer changed or is ambiguous; Alpha updates must retain the original certificate.')
+    schemes = set(re.findall(r'^Verified using (v[123]) scheme [^\r\n]*: true\s*$', report, re.M))
+    if require_all_schemes and schemes != {'v1', 'v2', 'v3'}:
+        raise ValueError('APK must verify with v1, v2 and v3; a v2-only package is not sufficient for installer compatibility.')
+    return sorted(schemes)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apk', required=True, type=Path)
@@ -39,8 +50,12 @@ def main():
         raise SystemExit('Tracked source has uncommitted changes; commit before packaging.')
     build = Path(os.environ.get('ANDROID_HOME', os.environ.get('ANDROID_SDK_ROOT', ''))) / 'build-tools/37.0.0'
     signature = run([str(build / 'apksigner'), 'verify', '--verbose', '--print-certs', str(args.apk.resolve())])
-    if SIGNER not in signature:
-        raise SystemExit('APK signer changed; this would break existing Alpha updates.')
+    validate_signature_report(signature)
+    # The APK still requires API 37. The wider verifier range exercises all three signature
+    # formats, including the JAR certificate lookup used by some installer inspection paths.
+    compatibility = run([str(build / 'apksigner'), 'verify', '--verbose', '--print-certs',
+        '--min-sdk-version', '23', '--max-sdk-version', '37', str(args.apk.resolve())])
+    schemes = validate_signature_report(compatibility, require_all_schemes=True)
     manifest = run([str(build / 'aapt2'), 'dump', 'badging', str(args.apk.resolve())])
     required = ["name='app.loop.ime'", f"versionName='{version}'", f"versionCode='{code}'", "minSdkVersion:'37'", "targetSdkVersion:'37'"]
     if not all(item in manifest for item in required) or 'application-debuggable' in manifest:
@@ -89,6 +104,7 @@ def main():
     metadata = dict(version=version, version_code=code, tag=f'v{version}', commit=commit,
                     prerelease='-' in version, tests=totals, native_libraries=libraries,
                     signer_sha256=SIGNER,
+                    signature_schemes=schemes,
                     assets={p.name: dict(bytes=p.stat().st_size, sha256=digest(p)) for p in (apk_out, source_out)})
     (out / 'release-manifest.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n')
     checks = [apk_out, source_out, out / 'release-manifest.json', out / 'release-notes.md']
