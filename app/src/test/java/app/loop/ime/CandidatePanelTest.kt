@@ -67,6 +67,38 @@ class CandidatePanelTest {
         assertEquals(height,k.height)
         k.findViewWithTag<View>("keyboard_status").performClick();assertTrue(undone)
     }
+    @Test fun committingAndDeletingNeverPromoteTheVoiceHintToANotice()=fixture { k,_ ->
+        measure(k);val height=k.height;val top=k.findViewWithTag<View>("keyboard_body").top
+        repeat(5) {
+            k.composition("ni hao · 64 426");k.setCandidates(listOf("你好" to {}));measure(k)
+            assertEquals(height,k.height)
+            k.endComposition();k.setCandidates(listOf("个人词" to {}));measure(k)
+            assertEquals(height,k.height);assertEquals(top,k.findViewWithTag<View>("keyboard_body").top)
+            assertEquals(View.GONE,k.findViewWithTag<View>("keyboard_notice").visibility)
+            assertEquals(View.GONE,k.findViewWithTag<View>("keyboard_preedit").visibility)
+            k.status("长按空格说话，松开结束");measure(k)
+            assertEquals(height,k.height);assertEquals(View.GONE,k.findViewWithTag<View>("keyboard_notice").visibility)
+            k.setCandidates(emptyList());measure(k);assertEquals(height,k.height)
+        }
+    }
+    @Test fun pinyinRemainsVisibleWhileTypingDeletingAndReceivingBackgroundErrors()=fixture { k,_ ->
+        for(nine in listOf(true,false)) {
+            k.setNineKey(nine);measure(k);val height=k.height
+            for(input in listOf("n","ni","ni hao","ni h","ni")) {
+                k.composition(input);k.setCandidates(listOf("你" to {}));k.aiStatus("连接失败");measure(k)
+                val preedit=k.findViewWithTag<TextView>("keyboard_preedit")
+                assertTrue(preedit.isShown);assertEquals(input,preedit.text.toString());assertEquals(height,k.height)
+                val scroll=all(k.findViewWithTag("candidate_strip")).filterIsInstance<android.widget.HorizontalScrollView>().single()
+                assertTrue(preedit.bottom<=scroll.top)
+            }
+            k.composition("unknown");k.setCandidates(emptyList());measure(k)
+            assertTrue(k.findViewWithTag<View>("keyboard_preedit").isShown)
+            k.endComposition();measure(k);assertEquals(height,k.height)
+            k.composition("ni hao");k.setMode(false);measure(k)
+            assertFalse(k.findViewWithTag<View>("keyboard_preedit").isShown)
+            k.setMode(true)
+        }
+    }
     @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun expandedWordsScrollAndLoadMoreWithoutGrowingTheKeyboard()=fixture { k,events ->
         val clicked=mutableListOf<Int>()

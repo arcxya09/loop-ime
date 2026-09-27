@@ -147,11 +147,13 @@ class NineKeyImeTest {
         all(strip).filterIsInstance<TextView>().single { it.text=="扩展姓名" }.performClick();f.drain()
         assertEquals("扩展姓名",f.text.toString())
     }
-    @Test fun typingAndBackspaceKeepCodesOutOfHostAndCandidateStripWhileNumberModeStillTypesDigits()=Fixture().use { f ->
+    @Test fun typingShowsTheCombinationOnlyInTheKeyboardWhileNumberModeStillTypesDigits()=Fixture().use { f ->
         f.type();assertEquals("",f.text.toString());assertEquals("",f.editor.owner)
-        assertFalse(all(f.keyboard.findViewWithTag("candidate_strip")).filterIsInstance<TextView>().any { it.text.contains("64426") })
+        assertEquals("64426",f.keyboard.findViewWithTag<TextView>("keyboard_preedit").text.toString())
         f.press("delete");f.drain();assertEquals("",f.text.toString())
+        assertEquals("6442",f.keyboard.findViewWithTag<TextView>("keyboard_preedit").text.toString())
         f.press("retype");f.drain();assertEquals("",f.text.toString())
+        assertEquals(View.GONE,f.keyboard.findViewWithTag<View>("keyboard_preedit").visibility)
         f.press("6");f.drain();assertEquals("6",f.text.toString())
     }
     @Test fun aiResultDoesNotWriteUntilTappedAndClearsTheWholeRimeBufferExactlyOnce()=Fixture().use { f ->

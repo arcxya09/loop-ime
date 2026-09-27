@@ -20,6 +20,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     private val ink=0xff343d48.toInt()
     private val muted=0xff7b8590.toInt()
     private val status=TextView(c)
+    private val preedit=TextView(c)
     private val notice=TextView(c)
     private val cloudRow=LinearLayout(c)
     private val cloudCandidates=LinearLayout(c)
@@ -97,6 +98,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     private var statusAction: (()->Unit)?=null
     private var hasCandidates=false
     private var composing=false
+    private var compositionText=""
     private var showNotice=false
     private val clearNotice=Runnable { showNotice=false;updateStrip() }
     private var spaceKey: HoldSpaceKey?=null
@@ -121,6 +123,11 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         candidates.orientation=HORIZONTAL;candidateScroll.isHorizontalScrollBarEnabled=false
         candidateScroll.addView(candidates,ViewGroup.LayoutParams(-2,-1))
         strip.addView(status,FrameLayout.LayoutParams(-1,-1))
+        labelStyle(preedit,11,10);preedit.setTextColor(green);preedit.gravity=Gravity.CENTER_VERTICAL
+        preedit.setPadding(dp(5),0,dp(5),0);preedit.tag="keyboard_preedit";preedit.visibility=GONE
+        preedit.ellipsize=TextUtils.TruncateAt.START
+        preedit.setOnClickListener { Toast.makeText(context,compositionText,Toast.LENGTH_LONG).show() }
+        strip.addView(preedit,FrameLayout.LayoutParams(-1,dp(16),Gravity.TOP))
         strip.addView(candidateScroll,FrameLayout.LayoutParams(-1,dp(34),Gravity.CENTER_VERTICAL))
         toolbar.addView(strip,LayoutParams(0,-1,1f))
         expandButton=tool("expand_candidates","展开全部候选词") { setExpanded(!expanded) }
@@ -202,11 +209,24 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     private fun modeName()=if(symbols)"数字 / 符号" else if(!chinese)"英文" else if(nineKey)"九宫格" else "全键盘"
     private fun isPreedit(s: String)=s.isNotBlank() && s.matches(Regex("[a-zA-Z0-9'üv :·-]+"))
     private fun isIdleHint(s: String)=s.startsWith("简体九宫格 ·") || s.startsWith("简体全键盘 ·") ||
-        s.startsWith("简体拼音已就绪") || s=="拼音已就绪" || s=="英文 · 长按空格说话"
+        s.startsWith("简体拼音已就绪") || s=="拼音已就绪" || s=="英文 · 长按空格说话" || s.startsWith("长按空格说话")
     private fun updateStrip() {
         status.text=if(isIdleHint(statusText) || statusText=="长按空格说话 · 松开结束")modeName() else statusText
         status.contentDescription=statusText
         val showCandidates=hasCandidates && !isVoice
+        val showPreedit=composing && compositionText.isNotBlank() && chinese && !symbols && !isVoice
+        preedit.text=compositionText;preedit.contentDescription="拼音：$compositionText"
+        preedit.visibility=if(showPreedit)VISIBLE else GONE
+        val candidateHeight=dp(if(showPreedit)28 else 34)
+        val candidateGravity=if(showPreedit)Gravity.BOTTOM else Gravity.CENTER_VERTICAL
+        val candidateParams=candidateScroll.layoutParams as FrameLayout.LayoutParams
+        if(candidateParams.height!=candidateHeight || candidateParams.gravity!=candidateGravity) {
+            candidateParams.height=candidateHeight;candidateParams.gravity=candidateGravity;candidateScroll.layoutParams=candidateParams
+        }
+        val statusParams=status.layoutParams as FrameLayout.LayoutParams
+        val statusHeight=if(showPreedit)dp(28) else -1
+        if(statusParams.height!=statusHeight) { statusParams.height=statusHeight;statusParams.gravity=Gravity.BOTTOM;status.layoutParams=statusParams }
+        if(showPreedit && !showCandidates)status.text="暂无候选词"
         status.visibility=if(showCandidates)View.GONE else View.VISIBLE
         candidateScroll.visibility=if(showCandidates)View.VISIBLE else View.GONE
         expandButton.visibility=if(showCandidates)VISIBLE else GONE
@@ -223,24 +243,25 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         toolsButton.invalidate();removeCallbacks(clearAiMessage);postDelayed(clearAiMessage,8000)
     }
     fun status(s: String,action: (()->Unit)?=null) {
-        composing=false;statusText=s;statusAction=action;removeCallbacks(clearNotice)
+        statusText=s;statusAction=action;removeCallbacks(clearNotice)
         // Notices have their own line; candidate selection remains available throughout.
         showNotice=s.isNotBlank() && !isIdleHint(s) && !isPreedit(s)
         updateStrip();if(showNotice)postDelayed(clearNotice,3500)
     }
     fun composition(preedit: String) {
-        // Codes stay inside Rime. The single toolbar is entirely available for word candidates.
-        composing=true;statusText=if(chinese && nineKey)"暂无候选词" else preedit
+        // Both lines share the existing 44 dp strip, keeping keyboard and key positions stable.
+        composing=preedit.isNotBlank();compositionText=preedit;statusText=preedit
         statusAction=null;showNotice=false;removeCallbacks(clearNotice);updateStrip()
     }
-    fun endComposition() { if(composing)status("长按空格说话 · 松开结束") }
-    fun setMode(cn: Boolean,sym: Boolean=false) { chinese=cn;symbols=sym;render() }
+    fun endComposition() { if(composing) { composing=false;compositionText="";status("长按空格说话 · 松开结束") } }
+    fun setMode(cn: Boolean,sym: Boolean=false) { composing=false;compositionText="";chinese=cn;symbols=sym;render() }
     fun setNineKey(nine: Boolean) { nineKey=nine;render() }
     fun setHeightPreset(preset: KeyboardHeight) { if(heightPreset!=preset) { heightPreset=preset;render() } }
     fun setEnter(s: String) { enterLabel=s;render() }
     fun cancelSpaceGesture() { spaceKey?.cancelGesture() }
     fun voice(active: Boolean) {
         isVoice=active
+        if(active) { composing=false;compositionText="" }
         // Keep the same keyboard, space view, and height throughout both recording gestures.
         micButton.glyph=if(active)"stop" else "mic";micButton.contentDescription=if(active)"结束语音" else "语音输入"
         micButton.tint=if(active)Color.WHITE else green;micButton.background=keyBg(if(active)green else mint,21)
@@ -370,6 +391,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         key(code)
     }
     fun panel(title: String,entries: List<Pair<String,()->Unit>>) {
+        composing=false;compositionText=""
         cancelSpaceGesture();spaceKey=null;body.removeAllViews();setCandidates(emptyList());setPredictions(emptyList());status(title)
         val list=LinearLayout(context).apply { orientation=VERTICAL }
         entries.forEach { (label,choose) -> list.addView(button(label,14) { choose() }.apply { setPadding(dp(12),0,dp(12),0);gravity=Gravity.CENTER_VERTICAL },LayoutParams(-1,dp(43)).apply { topMargin=dp(4) }) }

@@ -18,8 +18,8 @@ android {
         applicationId = "app.loop.ime"
         minSdk = 37
         targetSdk = 37
-        versionCode = 18
-        versionName = "0.1.17-alpha.18"
+        versionCode = 19
+        versionName = "0.1.18-alpha.19"
         ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
         testInstrumentationRunner = providers.gradleProperty("loopTestRunner")
             .orElse("app.loop.ime.LoopInstrumentation").get()
