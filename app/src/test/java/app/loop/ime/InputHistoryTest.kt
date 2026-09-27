@@ -4,6 +4,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class InputHistoryTest {
+    @Test fun contextualLearningUsesOnlyKnownPrecedingTextAndEditsRetractAssociations() {
+        val writes=mutableListOf<DraftSnapshot>();val h=InputHistory(writes::add)
+        h.apply(TextEdit(0,0,"开始"),"manual",false,false)
+        h.apply(TextEdit(2,2,"实施"),"choice",false,false);h.learn("实施","shishi",false)
+        assertEquals(mapOf("开始" to 1),h.recentChoices().single().contexts)
+        assertEquals(writes.last(),DraftSnapshot.decode(writes.last().encode()))
+        assertEquals(1,h.rankingEvidence("实施").single().count)
+        h.apply(TextEdit(0,2,"停止"),"manual",false,false)
+        assertTrue(h.recentChoices().single().contexts.isEmpty())
+        h.apply(TextEdit(0,4,""),"manual",false,false)
+        assertTrue(h.rankingEvidence("实施").isEmpty());assertTrue(h.rankingOrigins().isNotEmpty())
+        h.clear();assertTrue(h.rankingOrigins().isEmpty())
+        h.apply(TextEdit(-1,-1,"事实"),"choice",false,false);h.learn("事实","shishi",false)
+        assertTrue(h.recentChoices().single().contexts.isEmpty())
+    }
     @Test fun recentChoicesUpdateImmediatelyAndDeletionRemovesThem() {
         val writes=mutableListOf<DraftSnapshot>();val h=InputHistory(writes::add)
         h.apply(TextEdit(0,0,"小明"),"choice",false,false);h.learn("小明","xiaoming",false,"9:94266464")

@@ -9,7 +9,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
-data class Term(val text: String, val pinyin: String, val score: Int, val cloud: Boolean, val source: String,val lastUsed: Long=0,val inputCode: String="")
+data class Term(val text: String, val pinyin: String, val score: Int, val cloud: Boolean, val source: String,val lastUsed: Long=0,val inputCode: String="",val evidence: List<RankingEvidence> = emptyList())
 data class Memory(val id: String, val text: String, val time: Long, val source: String, val status: String, val cloud: Boolean)
 data class Clip(val id: String, val text: String, val pinned: Boolean)
 
@@ -63,6 +63,11 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
                     db.execSQL("ALTER TABLE evidence ADD COLUMN input_code TEXT NOT NULL DEFAULT ''")
                     db.version=4
                 }
+                if(db.version==4) {
+                    db.execSQL("ALTER TABLE evidence ADD COLUMN contexts TEXT NOT NULL DEFAULT '{}'")
+                    db.execSQL("CREATE INDEX evidence_choice_recent ON evidence(kind,last_used DESC)")
+                    db.version=5
+                }
             }
             check(db.query("PRAGMA foreign_key_check").use { !it.moveToFirst() }) { "词库来源校验失败，原记录保留" }
         } catch(t: Throwable) { close();throw t }
@@ -97,6 +102,8 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
         if(c.moveToFirst())Memory(c.getString(0),c.getString(1),c.getLong(2),c.getString(3),c.getString(4),c.getInt(5)==1) else null
     }
     private fun trimEvidence(id: String,text: String) {
+        // Edits can change a preceding context even when the selected word survives.
+        db.execSQL("UPDATE evidence SET contexts='{}' WHERE origin=?",arrayOf<Any>(id))
         db.execSQL("DELETE FROM evidence WHERE origin=? AND (kind='memory' OR instr(?,term)=0)",arrayOf<Any>(id,text))
         val counts=mutableListOf<Pair<String,Int>>()
         db.query("SELECT term,uses FROM evidence WHERE origin=? AND kind='choice'",arrayOf<Any>(id)).use { c ->
@@ -113,6 +120,7 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
             val used=choice.lastUsed.coerceIn(0,System.currentTimeMillis()+60000)
             val code=choice.inputCode.takeIf(CandidateRanking::validCode).orEmpty()
             db.execSQL("UPDATE evidence SET kind='choice',uses=?,last_used=max(last_used,?),input_code=CASE WHEN ?<>'' AND ?>=last_used THEN ? ELSE input_code END WHERE term=? AND origin=?",arrayOf<Any>(minOf(choice.count.coerceIn(1,100000),InputHistory.occurrences(snapshot.text,choice.text)),used,code,used,code,choice.text,snapshot.id))
+            db.execSQL("UPDATE evidence SET contexts=? WHERE term=? AND origin=?",arrayOf<Any>(CandidateRanking.encodeContexts(choice.contexts,minOf(choice.count,InputHistory.occurrences(snapshot.text,choice.text))),choice.text,snapshot.id))
         }
         StoreEvents.changed()
     }
@@ -187,23 +195,49 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
         val now=System.currentTimeMillis()
         return "CASE WHEN last_used BETWEEN ${now-CandidateRanking.RECENT_WINDOW} AND ${now+60000} THEN last_used ELSE 0 END DESC,score DESC,pinned DESC,length(text),text"
     }
-    fun terms(prefix: String = "", limit: Int = 100, cloudOnly: Boolean = false, nineKey: Boolean = false, offset: Int = 0): List<Term> {
+    fun terms(prefix: String = "", limit: Int = 100, cloudOnly: Boolean = false, nineKey: Boolean = false, offset: Int = 0, rankingContext: String = ""): List<Term> {
         val out=mutableListOf<Term>()
         // Only this validated ASCII code is used in the SQL expression; free-form prefixes remain bound.
         val code=CandidateRanking.inputCode(prefix,nineKey).takeIf(CandidateRanking::validCode).orEmpty()
         val alias=if(code.isEmpty())"0" else "EXISTS(SELECT 1 FROM evidence WHERE term=terms.text AND kind='choice' AND input_code='$code')"
         val columns="$rankedColumns,CASE WHEN $alias THEN '$code' ELSE '' END AS input_code"
+        // Context keys contain only Unicode letters. Encode as a bound UTF-8 hex literal,
+        // so no user-controlled character is ever interpolated as SQL syntax.
+        val ctx=CandidateRanking.context(rankingContext)
+        val key=("\""+ctx+"\":").toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val contextOrder=if(ctx.isEmpty())"" else "CASE WHEN EXISTS(SELECT 1 FROM evidence e WHERE e.term=terms.text AND e.kind='choice' AND instr(e.contexts,CAST(X'$key' AS TEXT))>0) THEN 0 ELSE 1 END,"
         if(nineKey && prefix.isNotEmpty()) {
             // GLOB classes resolve the phone keys against existing encrypted pinyin. No destructive
             // migration or plaintext copy; exact phonetic matches rank ahead of longer completions.
             val pattern=NineKey.glob(prefix) ?: return out
-            db.query("SELECT $columns FROM terms WHERE (pinyin GLOB ? OR $alias) ${if(cloudOnly)"AND cloud=1" else ""} ORDER BY CASE WHEN pinyin GLOB ? OR $alias THEN 0 ELSE 1 END,${rankingOrder()} LIMIT ? OFFSET ?",arrayOf<Any>(pattern+"*",pattern,limit.coerceIn(1,501),offset.coerceAtLeast(0))).use { c ->
+            db.query("SELECT $columns FROM terms WHERE (pinyin GLOB ? OR $alias) ${if(cloudOnly)"AND cloud=1" else ""} ORDER BY CASE WHEN pinyin GLOB ? OR $alias THEN 0 ELSE 1 END,$contextOrder${rankingOrder()} LIMIT ? OFFSET ?",arrayOf<Any>(pattern+"*",pattern,limit.coerceIn(1,513),offset.coerceAtLeast(0))).use { c ->
                 while(c.moveToNext())out+=Term(c.getString(0),c.getString(1),c.getInt(2),c.getInt(3)==1,c.getString(4),c.getLong(5),c.getString(6))
             }
             return out
         }
-        db.query("SELECT $columns FROM terms WHERE (pinyin LIKE ? ESCAPE '\\' OR instr(text,?)>0 OR $alias) ${if(cloudOnly)"AND cloud=1" else ""} ORDER BY CASE WHEN pinyin=? OR $alias THEN 0 ELSE 1 END,${rankingOrder()} LIMIT ? OFFSET ?",arrayOf<Any>(prefix.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%",prefix,prefix,limit.coerceIn(1,501),offset.coerceAtLeast(0))).use { c -> while(c.moveToNext()) out+=Term(c.getString(0),c.getString(1),c.getInt(2),c.getInt(3)==1,c.getString(4),c.getLong(5),c.getString(6)) }
+        db.query("SELECT $columns FROM terms WHERE (pinyin LIKE ? ESCAPE '\\' OR instr(text,?)>0 OR $alias) ${if(cloudOnly)"AND cloud=1" else ""} ORDER BY CASE WHEN pinyin=? OR $alias THEN 0 ELSE 1 END,$contextOrder${rankingOrder()} LIMIT ? OFFSET ?",arrayOf<Any>(prefix.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%",prefix,prefix,limit.coerceIn(1,513),offset.coerceAtLeast(0))).use { c -> while(c.moveToNext()) out+=Term(c.getString(0),c.getString(1),c.getInt(2),c.getInt(3)==1,c.getString(4),c.getLong(5),c.getString(6)) }
         return out
+    }
+    /** Candidate retrieval is bounded; all sorting happens before pagination within each pool. */
+    fun rankedTerms(prefix: String,context: String,nineKey: Boolean=false,offset: Int=0,limit: Int=65): List<Term> {
+        val poolStart=(offset.coerceAtLeast(0)/512)*512
+        val pool=terms(prefix,513,nineKey=nineKey,offset=poolStart,rankingContext=context)
+        val ranked=CandidateRanking.sort(withRankingEvidence(pool.take(512)),context=context)
+            .sortedBy { if(CandidateRanking.exact(it,prefix,nineKey))0 else 1 }
+        val take=limit.coerceIn(1,65)
+        val page=ranked.drop(offset.coerceAtLeast(0)-poolStart).take(take)
+        return if(page.size<take && pool.size>512)page+rankedTerms(prefix,context,nineKey,poolStart+512,take-page.size) else page
+    }
+    private fun withRankingEvidence(terms: List<Term>): List<Term> {
+        if(terms.isEmpty())return terms
+        val rows=mutableMapOf<String,MutableList<RankingEvidence>>()
+        // A single indexed batch; at most 32 recent origins per candidate. Older frequency
+        // remains in terms.score even after this bounded adaptation window is full.
+        val marks=terms.joinToString(",") { "?" }
+        db.query("SELECT term,origin,uses,last_used,contexts FROM (SELECT term,origin,uses,last_used,contexts,row_number() OVER(PARTITION BY term ORDER BY last_used DESC,origin) AS rn FROM evidence WHERE kind='choice' AND term IN ($marks)) WHERE rn<=32",terms.map { it.text as Any }.toTypedArray()).use { c ->
+            while(c.moveToNext())rows.getOrPut(c.getString(0)) { mutableListOf() }+=RankingEvidence(c.getString(1),c.getInt(2),c.getLong(3),CandidateRanking.decodeContexts(c.getString(4),c.getInt(2)))
+        }
+        return terms.map { it.copy(evidence=rows[it.text].orEmpty()) }
     }
     fun forgetTerm(text: String) = transaction {
         db.execSQL("DELETE FROM terms WHERE text=?",arrayOf<Any>(text));db.insert("forgotten",SQLiteDatabase.CONFLICT_IGNORE,cv("text" to text));StoreEvents.changed()
@@ -306,6 +340,7 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
                 values.put("uses",j.optInt("uses",1).coerceIn(1,100000))
                 values.put("last_used",j.optLong("last_used",0).coerceIn(0,System.currentTimeMillis()+60000))
                 values.put("input_code",j.optString("input_code","").takeIf(CandidateRanking::validCode).orEmpty())
+                values.put("contexts",CandidateRanking.encodeContexts(CandidateRanking.decodeContexts(j.optString("contexts","{}"),values.getAsInteger("uses")),values.getAsInteger("uses")))
                 val origin=j.getString("origin")
                 val decision=db.query("SELECT accepted FROM loop_import_origins WHERE id=?",arrayOf<Any>(origin)).use { if(it.moveToFirst())it.getInt(0) else null }
                 val memory=memoriesById(origin)
@@ -317,12 +352,13 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
                     val uses=InputHistory.occurrences(memory.text,j.getString("term"))
                     if(uses==0) { result.skipped++;return@forEach }
                     values.put("uses",minOf(values.getAsInteger("uses"),uses))
+                    values.put("contexts",CandidateRanking.encodeContexts(CandidateRanking.decodeContexts(values.getAsString("contexts"),values.getAsInteger("uses")),values.getAsInteger("uses")))
                 }
             }
             val inserted=db.insert(t,SQLiteDatabase.CONFLICT_IGNORE,values)
             if(inserted!=-1L)result.added++ else when(t) {
                 "terms" -> { db.execSQL("UPDATE terms SET cloud=min(cloud,?),pinyin=CASE WHEN pinned=0 AND ?=1 THEN ? ELSE pinyin END,pinned=max(pinned,?) WHERE text=?",arrayOf<Any>(j.getInt("cloud"),j.getInt("pinned"),j.getString("pinyin"),j.getInt("pinned"),j.getString("text")));result.merged++ }
-                "evidence" -> { db.execSQL("UPDATE evidence SET cloud=min(cloud,?),uses=max(uses,?),last_used=max(last_used,?),input_code=CASE WHEN ?<>'' AND ?>last_used THEN ? ELSE input_code END WHERE term=? AND origin=?",arrayOf<Any>(values.getAsInteger("cloud"),values.getAsInteger("uses"),values.getAsLong("last_used"),values.getAsString("input_code"),values.getAsLong("last_used"),values.getAsString("input_code"),j.getString("term"),j.getString("origin")));result.merged++ }
+                "evidence" -> { db.execSQL("UPDATE evidence SET cloud=min(cloud,?),uses=max(uses,?),last_used=max(last_used,?),input_code=CASE WHEN ?<>'' AND ?>last_used THEN ? ELSE input_code END,contexts=CASE WHEN ?>last_used THEN ? ELSE contexts END WHERE term=? AND origin=?",arrayOf<Any>(values.getAsInteger("cloud"),values.getAsInteger("uses"),values.getAsLong("last_used"),values.getAsString("input_code"),values.getAsLong("last_used"),values.getAsString("input_code"),values.getAsLong("last_used"),values.getAsString("contexts"),j.getString("term"),j.getString("origin")));result.merged++ }
                 "clips" -> { db.execSQL("UPDATE clips SET pinned=max(pinned,?) WHERE id=?",arrayOf<Any>(j.getInt("pinned"),j.getString("id")));result.merged++ }
                 else -> result.skipped++
             }
@@ -340,7 +376,7 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
         StoreEvents.changed()
     }
     companion object {
-        const val SCHEMA_VERSION=4
+        const val SCHEMA_VERSION=5
         private var instance: PersonalStore? = null
         private var lastFailure: DatabaseUnavailable?=null
         private var failedUntil=0L

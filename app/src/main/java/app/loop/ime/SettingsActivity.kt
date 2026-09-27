@@ -176,7 +176,7 @@ class SettingsActivity : Activity() {
         }
         setting("每天自动检查更新","automatic",AppUpdates.enabled(this))
         setting("发现新版后通过 Wi-Fi 自动下载","download",AppUpdates.autoDownload(this))
-        setting("接收 Alpha / 预发布版本","previews",AppUpdates.previews(this))
+        label("更新通道：正式版本",13f)
         val state=label(AppUpdates.status(this),15f,true)
         lateinit var check: Button
         check=button("立即检查更新") {
