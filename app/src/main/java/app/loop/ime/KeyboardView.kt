@@ -22,6 +22,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     private val status=TextView(c)
     private val preedit=TextView(c)
     private val notice=TextView(c)
+    private val toolbarButtons=mutableListOf<View>()
     private val cloudRow=LinearLayout(c)
     private val cloudCandidates=LinearLayout(c)
     private var predictionValues=emptyList<Pair<String,()->Unit>>()
@@ -99,6 +100,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         val toolbar=LinearLayout(c).apply { gravity=Gravity.CENTER_VERTICAL;tag="keyboard_toolbar" }
         fun tool(code: String,description: String,action: ()->Unit): KeyboardIcon {
             val v=icon(code,description,Color.TRANSPARENT,action)
+            toolbarButtons+=v
             toolbar.addView(v,LayoutParams(dp(42),dp(42)));return v
         }
         toolsButton=tool("tools","Loop 工具与设置") { key("tools") }
@@ -106,6 +108,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             if(showNotice) { showStatus();true } else if(aiMessage.isNotEmpty()) { Toast.makeText(context,aiMessage,Toast.LENGTH_LONG).show();true } else false
         }
         val strip=FrameLayout(c).apply { tag="candidate_strip" }
+        strip.setOnLongClickListener { candidateMenu(strip);true }
         labelStyle(status,11,9);status.setTextColor(muted);status.gravity=Gravity.CENTER_VERTICAL
         status.setPadding(dp(5),0,dp(5),0);status.tag="keyboard_status"
         status.setOnClickListener { showStatus() }
@@ -116,11 +119,13 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         preedit.setPadding(dp(5),0,dp(5),0);preedit.tag="keyboard_preedit";preedit.visibility=GONE
         preedit.ellipsize=TextUtils.TruncateAt.START
         preedit.setOnClickListener { Toast.makeText(context,compositionText,Toast.LENGTH_LONG).show() }
+        preedit.setOnLongClickListener { candidateMenu(preedit);true }
         strip.addView(preedit,FrameLayout.LayoutParams(-1,dp(16),Gravity.TOP))
         strip.addView(candidateScroll,FrameLayout.LayoutParams(-1,dp(28),Gravity.BOTTOM))
         toolbar.addView(strip,LayoutParams(0,-1,1f))
         expandButton=tool("expand_candidates","展开全部候选词") { setExpanded(!expanded) }
         separator=action("分词","separator",10,Color.TRANSPARENT).apply { setTextColor(muted);contentDescription="拼音分词" }
+        toolbarButtons+=separator
         toolbar.addView(separator,LayoutParams(dp(34),dp(42)))
         aiButton=tool("ai_settings","AI 设置") { key("ai_settings") }
         clipButton=tool("clipboard","剪贴板") { key(if(isVoice)"cancel_voice" else "clipboard") }
@@ -134,7 +139,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         notice.gravity=Gravity.CENTER_VERTICAL;notice.visibility=GONE
         notice.setOnClickListener { showStatus() }
         strip.addView(notice,FrameLayout.LayoutParams(-1,dp(16),Gravity.TOP))
-        body.orientation=VERTICAL;body.tag="keyboard_body";content.addView(body,FrameLayout.LayoutParams(-1,-2))
+        body.orientation=VERTICAL;body.tag="keyboard_body";content.addView(body,FrameLayout.LayoutParams(-1,-1))
         expandedScroll.tag="expanded_candidates";expandedScroll.visibility=GONE;expandedScroll.isFillViewport=true
         expandedScroll.addView(expandedWords,ViewGroup.LayoutParams(-1,-2));content.addView(expandedScroll,FrameLayout.LayoutParams(-1,-1))
         expandedScroll.setOnScrollChangeListener { _,_,y,_,_ ->
@@ -181,6 +186,22 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         setOnClickListener { performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);action() }
     }
     private fun action(label: String,code: String,size: Int=17,color: Int=Color.WHITE): TextView = button(label,size,color) { press(code) }.apply { tag=code }
+    private fun alternate(label: String,code: String,other: String,size: Int=17): TextView = AlternateKey(context,other) { press("literal:$other") }.apply {
+        text=label;tag=code;contentDescription="$label，长按输入 $other";labelStyle(this,size)
+        gravity=Gravity.CENTER;setTextColor(ink);background=keyBg(Color.WHITE);setPadding(dp(4),dp(2),dp(4),0);isFocusable=false
+        setOnClickListener { performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);press(code) }
+    }
+    private fun candidateMenu(anchor: View) {
+        PopupMenu(context,anchor).apply {
+            menu.add(if(expanded)"返回键盘" else "展开候选").setOnMenuItemClickListener { setExpanded(!expanded);true }
+            if(composing && chinese)menu.add("拼音分词").setOnMenuItemClickListener { key("separator");true }
+            if(showNotice)menu.add(statusText).setOnMenuItemClickListener { showStatus();true }
+            if(aiMessage.isNotEmpty())menu.add(aiMessage).setOnMenuItemClickListener { Toast.makeText(context,aiMessage,Toast.LENGTH_LONG).show();true }
+            menu.add("Loop 工具").setOnMenuItemClickListener { key("tools");true }
+            menu.add("收起键盘").setOnMenuItemClickListener { key("hide");true }
+            show()
+        }
+    }
     private fun deleteKey(): View=icon("delete","删除") { press("delete") }.apply {
         val repeat=object: Runnable { override fun run() { key("delete");postDelayed(this,65) } }
         setOnTouchListener { _,e -> when(e.actionMasked) { MotionEvent.ACTION_DOWN->postDelayed(repeat,380);MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->removeCallbacks(repeat) };false }
@@ -216,6 +237,9 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         separator.visibility=if(showCandidates && chinese && !symbols)View.VISIBLE else View.GONE
         aiButton.visibility=if(showCandidates || isVoice)View.GONE else View.VISIBLE
         clipButton.visibility=if(showCandidates)View.GONE else View.VISIBLE
+        // The entire toolbar width belongs to candidates; gestures/menu retain secondary actions.
+        toolbarButtons.forEach { it.visibility=if(showCandidates)GONE else VISIBLE }
+        if(!showCandidates) { expandButton.visibility=GONE;separator.visibility=GONE;aiButton.visibility=if(isVoice)GONE else VISIBLE }
         updateToolsHint()
     }
     private fun updateToolsHint() {
@@ -286,6 +310,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
     }
     private fun renderExpanded() {
         expandedWords.removeAllViews()
+        expandedWords.addView(button("返回键盘",13,secondary) { setExpanded(false) },ViewGroup.LayoutParams(-2,dp(44)))
         candidateValues.forEachIndexed { i,(text,choose) -> expandedWords.addView(button(text,17,if(i==0)mint else Color.TRANSPARENT) {
             setExpanded(false);choose()
         }.apply { setPadding(dp(14),0,dp(14),0);minimumWidth=dp(56);setTextColor(if(text in candidateAiTexts)green else ink) },ViewGroup.LayoutParams(-2,dp(44))) }
@@ -312,11 +337,13 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             candidates.addView(button(text,16,if(i==0)mint else Color.TRANSPARENT,choose).apply {
                 setTextColor(if(i==0 || text in aiTexts)green else ink);setPadding(dp(12),0,dp(12),0)
                 if(text in aiTexts)contentDescription="$text，AI 候选"
+                setOnLongClickListener { candidateMenu(this);true }
             },LayoutParams(-2,-1).apply { rightMargin=dp(4) })
         }
         cloudCandidates.removeAllViews()
         predictionValues.forEach { (text,choose) -> cloudCandidates.addView(button(text,15,Color.TRANSPARENT,choose).apply {
             setTextColor(green);setPadding(dp(12),0,dp(12),0);contentDescription="$text，AI 候选"
+            setOnLongClickListener { candidateMenu(this);true }
         },LayoutParams(-2,-1)) }
         cloudRow.visibility=if(predictionValues.isNotEmpty())VISIBLE else GONE
         candidates.addView(cloudRow,LayoutParams(-2,-1))
@@ -349,17 +376,13 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             val row=LinearLayout(context)
             repeat(3) { col ->
                 val n=rowIndex*3+col+1;val code=if(n==1)"punctuation" else "t9:$n"
-                val v=LetterKey(context,n.toString()).apply {
-                    text=labels[n-1];labelStyle(this,if(n>=7)17 else 18);gravity=Gravity.CENTER;setTextColor(ink);background=keyBg(Color.WHITE)
-                    setPadding(dp(4),dp(2),dp(4),0);tag=code;contentDescription="${labels[n-1]}，数字 $n";isClickable=true;isFocusable=false
-                    setOnClickListener { performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);press(code) }
-                }
+                val v=alternate(labels[n-1],code,n.toString(),if(n>=7)17 else 18)
                 row.addView(v,LayoutParams(0,-1,1f).apply { if(col<2)rightMargin=gap })
             }
             center.addView(row,LayoutParams(-1,rowHeight).apply { bottomMargin=gap })
         }
         val bottom=LinearLayout(context)
-        bottom.addView(action("123","numbers",16),LayoutParams(0,-1,0.7f).apply { rightMargin=gap })
+        bottom.addView(alternate("123","numbers","0",16),LayoutParams(0,-1,0.7f).apply { rightMargin=gap })
         bottom.addView(space(),LayoutParams(0,-1,1.9f).apply { rightMargin=gap })
         bottom.addView(action("中/英","language",12),LayoutParams(0,-1,0.85f))
         center.addView(bottom,LayoutParams(-1,height-rowHeight*3-gap*3))
@@ -381,14 +404,23 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             row(listOf("⇧" to "shift")+"zxcvbnm".map { (if(shift)it.uppercaseChar() else it).toString() to (if(shift)it.uppercaseChar() else it).toString() }+listOf("⌫" to "delete"))
         }
         val bottom=LinearLayout(context)
-        for((label,code) in listOf((if(symbols)"ABC" else "123") to "symbols",(if(chinese)"中/英" else "英/中") to "language","，" to "comma","空格" to "space","。" to "period",enterLabel to "enter")) {
+        for((label,code) in listOf((if(symbols)"ABC" else "123") to "symbols",(if(chinese)"，" else ",") to "comma","空格" to "space",(if(chinese)"。" else ".") to "period",(if(chinese)"中/英" else "英/中") to "language",enterLabel to "enter")) {
             val v=if(code=="space")space() else action(label,code,12,if(code=="enter")mint else Color.WHITE)
-            bottom.addView(v,LayoutParams(0,dp(heightPreset.rowDp),if(code=="space")3.5f else 1.2f).apply { setMargins(dp(2),dp(4),dp(2),0) })
-        };body.addView(bottom)
+            bottom.addView(v,LayoutParams(0,-1,if(code=="space")3.5f else 1.2f).apply { setMargins(dp(2),0,dp(2),0) })
+        };addFullRow(bottom)
     }
     private fun row(keys: List<Pair<String,String>>,margin: Int=0) {
         val row=LinearLayout(context).apply { setPadding(margin,0,margin,0) }
-        keys.forEach { (label,code) -> row.addView(if(code=="delete")deleteKey() else action(label,code),LayoutParams(0,dp(heightPreset.rowDp),1f).apply { setMargins(dp(2),dp(4),dp(2),0) }) };body.addView(row)
+        keys.forEach { (label,code) ->
+            val index="qwertyuiopasdfghjklzxcvbnm".indexOf(code.lowercase())
+            val other=if(!chinese && !symbols && code.length==1 && index>=0)"1234567890@#$%&*()-!\"':;?/"[index].toString() else null
+            val v=if(code=="delete")deleteKey() else if(other!=null)alternate(label,code,other) else action(label,code)
+            row.addView(v,LayoutParams(0,-1,1f).apply { setMargins(dp(2),0,dp(2),0) })
+        };addFullRow(row)
+    }
+    private fun addFullRow(row: View) {
+        val index=body.childCount;val height=dp(heightPreset.padDp);val gap=dp(5);val regular=(height-gap*3)/4
+        body.addView(row,LayoutParams(-1,if(index==3)height-regular*3-gap*3 else regular).apply { topMargin=if(index==0)dp(4) else gap })
     }
     private fun press(code: String) {
         if(isVoice && code !in setOf("space","mic"))return
@@ -403,9 +435,5 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         entries.forEach { (label,choose) -> list.addView(button(label,14) { choose() }.apply { setPadding(dp(12),0,dp(12),0);gravity=Gravity.CENTER_VERTICAL },LayoutParams(-1,dp(43)).apply { topMargin=dp(4) }) }
         body.addView(ScrollView(context).apply { addView(list) },LayoutParams(-1,dp(heightPreset.padDp-44)))
         body.addView(button("返回键盘",13,secondary) { render();key("panel_close") },LayoutParams(-1,dp(40)).apply { topMargin=dp(4) })
-    }
-    private class LetterKey(c: Context,private val number: String): TextView(c) {
-        private val corner=Paint(Paint.ANTI_ALIAS_FLAG).apply { color=0xff9da6af.toInt();textAlign=Paint.Align.RIGHT;textSize=8.5f*resources.displayMetrics.density }
-        override fun onDraw(canvas: Canvas) { super.onDraw(canvas);val d=resources.displayMetrics.density;canvas.drawText(number,width-6*d,11*d,corner) }
     }
 }

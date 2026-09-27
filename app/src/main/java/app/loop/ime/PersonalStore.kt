@@ -192,6 +192,17 @@ class PersonalStore internal constructor(private val db: SupportSQLiteDatabase, 
     fun forgetTerm(text: String) = transaction {
         db.execSQL("DELETE FROM terms WHERE text=?",arrayOf<Any>(text));db.insert("forgotten",SQLiteDatabase.CONFLICT_IGNORE,cv("text" to text));StoreEvents.changed()
     }
+    fun continuationTerms(context: String): List<Term> {
+        val prefixes=PredictionText.localPrefixes(context)
+        if(prefixes.isEmpty())return emptyList()
+        val out=mutableListOf<Term>()
+        // Prefixes contain only letters/digits. Bound parameters still keep user text out of SQL.
+        val where=prefixes.joinToString(" OR ") { "text LIKE ?" }
+        db.query("SELECT text,pinyin,score,cloud,source FROM terms WHERE $where ORDER BY score DESC,pinned DESC,length(text),text LIMIT 64",prefixes.map { "$it%" }.toTypedArray()).use { c ->
+            while(c.moveToNext())out+=Term(c.getString(0),c.getString(1),c.getInt(2),c.getInt(3)==1,c.getString(4))
+        }
+        return out
+    }
     fun addClip(text: String) {
         if(text.isBlank() || text.length>20000)return
         db.execSQL("DELETE FROM clips WHERE text=? AND pinned=0",arrayOf<Any>(text))

@@ -13,6 +13,14 @@ import org.robolectric.annotation.SQLiteMode
 @Config(sdk=[37],application=Application::class)
 @SQLiteMode(SQLiteMode.Mode.NATIVE)
 class StoreRegressionTest {
+    @Test fun continuationLookupDoesNotFallBackToFrequentWords()=StoreFixture().use { f ->
+        f.store.addTerm("好的","haode",explicit=true)
+        f.store.addTerm("你好世界","nihaoshijie",explicit=true)
+        assertTrue(f.store.continuationTerms("").isEmpty())
+        assertTrue(f.store.continuationTerms("今天").isEmpty())
+        assertEquals(listOf("你好世界"),f.store.continuationTerms("我说你好").map { it.text })
+        assertEquals(2L,f.store.count("terms"))
+    }
     @Test fun mergePreviewAuthenticatesAndRollsBackAllChanges()=StoreFixture().use { f ->
         f.store.addTerm("本机词","benjici",explicit=true)
         val before=mutableListOf<String>();f.store.exportRows { before+=it.toString() }

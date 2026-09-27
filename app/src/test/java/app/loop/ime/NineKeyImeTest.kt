@@ -84,11 +84,12 @@ class NineKeyImeTest {
         fun emit(kind: Int,text: String)=ReflectionHelpers.callInstanceMethod<Unit>(f.service,"onSpeech",ClassParameter.from(Int::class.javaPrimitiveType,kind),ClassParameter.from(String::class.java,text))
         val before=height()
         for(kind in listOf(SpeechWire.DONE,SpeechWire.ERROR,SpeechWire.MODEL_REQUIRED)) {
+            ReflectionHelpers.setField(f.service,"latestText","个人")
             ReflectionHelpers.setField(f.service,"voice",true);ReflectionHelpers.setField(f.service,"speechDone",false);f.keyboard.voice(true)
             emit(SpeechWire.READY,"正在听");assertEquals(before,height())
             emit(kind,if(kind==SpeechWire.MODEL_REQUIRED)"请下载离线模型" else "识别失败")
             assertEquals(before,height());assertFalse(ReflectionHelpers.getField(f.service,"voice"))
-            assertTrue("Missing personal candidates after speech event $kind",all(f.keyboard.findViewWithTag("candidate_strip")).filterIsInstance<TextView>().any { it.text=="个人词" })
+            assertTrue("Missing continuation after speech event $kind",all(f.keyboard.findViewWithTag("candidate_strip")).filterIsInstance<TextView>().any { it.text=="词" })
         }
         ReflectionHelpers.setField(f.service,"restricted",true)
     }
@@ -118,6 +119,7 @@ class NineKeyImeTest {
                 else -> if(key==0xff08)raw=raw.dropLast(1) else raw+=key.toChar()
             }
             JSONObject().put("raw",raw).put("preedit",raw).put("caret",raw.length).put("selStart",0)
+                .put("reading",when(raw) { "64426"->"ni hao";"6442"->"ni ha";""->"";else->"ni" })
                 .put("commit",commit).put("candidates",JSONArray(if(raw.isEmpty())emptyList() else localWords().take(candidateLimit)))
                 .put("hasMore",raw.isNotEmpty() && candidateCount>candidateLimit).toString().toByteArray()
         }
@@ -168,9 +170,9 @@ class NineKeyImeTest {
     }
     @Test fun typingShowsTheCombinationOnlyInTheKeyboardWhileNumberModeStillTypesDigits()=Fixture().use { f ->
         f.type();assertEquals("",f.text.toString());assertEquals("",f.editor.owner)
-        assertEquals("64426",f.keyboard.findViewWithTag<TextView>("keyboard_preedit").text.toString())
+        assertEquals("ni hao",f.keyboard.findViewWithTag<TextView>("keyboard_preedit").text.toString())
         f.press("delete");f.drain();assertEquals("",f.text.toString())
-        assertEquals("6442",f.keyboard.findViewWithTag<TextView>("keyboard_preedit").text.toString())
+        assertEquals("ni ha",f.keyboard.findViewWithTag<TextView>("keyboard_preedit").text.toString())
         f.press("retype");f.drain();assertEquals("",f.text.toString())
         assertEquals(View.GONE,f.keyboard.findViewWithTag<View>("keyboard_preedit").visibility)
         f.press("6");f.drain();assertEquals("6",f.text.toString())
@@ -255,6 +257,43 @@ class NineKeyImeTest {
         answer!!(Result.success(AiResult("您好",listOf("过期结果"))))
         assertEquals("你好",f.text.toString())
         ReflectionHelpers.setField(f.service,"restricted",true)
+    }
+    @Test fun idleWordsNeverAppearAndLocalPredictionsInsertOnlyTheSuffix()=StoreFixture().use { store ->
+        store.install()
+        Fixture().use { f ->
+            ReflectionHelpers.setField(f.service,"restricted",false)
+            val terms=listOf(Term("好的","haode",100,false,"manual"),Term("你好世界","nihaoshijie",1,false,"manual"))
+            ReflectionHelpers.setField(f.service,"personal",terms)
+            fun render()=ReflectionHelpers.callInstanceMethod<Unit>(f.service,"renderCandidates")
+            render();assertFalse(all(f.keyboard.findViewWithTag("candidate_strip")).filterIsInstance<TextView>().any { it.text=="好的" })
+            f.press("你好");f.drain();ReflectionHelpers.setField(f.service,"personal",terms);render()
+            all(f.keyboard.findViewWithTag("candidate_strip")).filterIsInstance<TextView>().single { it.text=="世界" }.performClick()
+            assertEquals("你好世界",f.text.toString());assertTrue(ReflectionHelpers.getField(f.service,"cloudBlocked"))
+            ReflectionHelpers.setField(f.service,"restricted",true)
+        }
+    }
+    @Test fun cloudEchoesAreRemovedAndStalePredictionClicksCannotInsert()=StoreFixture().use { store ->
+        store.install()
+        Fixture().use { f ->
+            Prefs(f.service).set("cloud",true);ReflectionHelpers.setField(f.service,"restricted",false)
+            var answer: ((Result<AiResult>)->Unit)?=null
+            f.service.completeText={ _,_,cb -> answer=cb;AiCall() }
+            f.press("今天天气");f.drain();shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(660))
+            answer!!(Result.success(AiResult("今天天气",listOf("今天天气","今天天气很好","天气很好"))))
+            val values=ReflectionHelpers.getField<List<String>>(f.service,"suggestions");assertEquals(listOf("很好"),values)
+            val word=all(f.keyboard.findViewWithTag("candidate_strip")).filterIsInstance<TextView>().single { it.text=="很好" }
+            word.performClick();assertEquals("今天天气很好",f.text.toString())
+            word.performClick();assertEquals("今天天气很好",f.text.toString())
+            f.press("delete");f.drain();answer!!(Result.success(AiResult("今天天气",listOf("旧结果"))))
+            assertTrue(ReflectionHelpers.getField<List<String>>(f.service,"suggestions").isEmpty())
+            ReflectionHelpers.setField(f.service,"restricted",true)
+        }
+    }
+    @Test fun alternateCharactersCommitCompositionAndNeverEnterThePinyinEngine()=Fixture().use { f ->
+        f.type();f.press("literal:3");f.drain();assertEquals("你3",f.text.toString())
+        assertEquals("",ReflectionHelpers.getField<RimeState>(f.service,"state").raw)
+        f.press("literal:'");f.drain();assertEquals("你3'",f.text.toString())
+        f.press("language");f.press("literal:@");f.drain();assertEquals("你3'@",f.text.toString())
     }
     @Test fun aiCandidateSwitchUsesExistingTextAiConsentAndPersistsWhenDisabled() {
         val c=org.robolectric.RuntimeEnvironment.getApplication()
