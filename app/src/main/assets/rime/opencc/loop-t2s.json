@@ -1,0 +1,16 @@
+{
+  "name": "Loop Traditional to Simplified (bundled text dictionaries)",
+  "segmentation": {
+    "type": "mmseg",
+    "dict": { "type": "text", "file": "TSPhrases.txt" }
+  },
+  "conversion_chain": [{
+    "dict": {
+      "type": "group",
+      "dicts": [
+        { "type": "text", "file": "TSPhrases.txt" },
+        { "type": "text", "file": "TSCharacters.txt" }
+      ]
+    }
+  }]
+}

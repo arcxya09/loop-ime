@@ -1,14 +1,20 @@
 # Loop 输入法
 
-Android 17（API 37）及以上的原生中英 AI 输入法。版本 `0.1.12-alpha.13`，支持 arm64-v8a 和 x86_64。APK 保留拼音词典与识别运行库，移除约 199 MB 的离线语音权重；基础输入安装即用，离线语音模型在需要时单独下载。
+Android 17（API 37）及以上的原生中英 AI 输入法。版本 `0.1.14-alpha.15`，支持 arm64-v8a 和 x86_64。APK 保留拼音词典与识别运行库，移除约 199 MB 的离线语音权重；基础输入安装即用，离线语音模型在需要时单独下载。
 
 当前为可安装、可继续开发的 Alpha 版本。已实现下表功能；商用级准确率、续航、长时间语音及各厂商手机兼容性仍需真机验收。不要把设计文档中的性能目标视为本版本的实测指标。
 
 项目提供 GitHub Actions 自动构建与发布配置：推送到默认分支后运行完整主机测试，验证 APK 并发布带 APK、源码及校验值的 Release。接入与更新步骤见 `GITHUB_RELEASES.md`；后续维护约定见 `AGENTS.md`。
 
+首次克隆或解压源码后，先用 Python 3.11+ 运行 `python3 scripts/materialize-dependencies.py`（Windows 可用 `python`）。它从仓库内的分块文件还原识别库和 Boost 源码包，逐块及整体核对 SHA-256，无需下载；CI 自动执行此步骤。随后可运行 Gradle Wrapper 或用 Android Studio 打开项目。
+
 ## 使用
 
-1. 安装交付的 `Loop-IME-0.1.12-alpha.13.apk`。系统必须是 Android 17 / API 37+，并允许本次 APK 安装。
+本次 alpha.15 修复了光标定位、单位与否定词纠错、回车动作、语音热词隐私、旧备份词频、分页队列、当前剪贴板和英文语音分段问题。设置中的个人词库支持分页和直接修改读音；AI 设置可选择关闭纠错、只显示建议或保守自动纠错。键盘 Loop 工具可对当前应用开启长期隐私输入，AI 自动修改后的状态栏可直接点击撤销。
+
+备份页可先预览合并结果；模型页可查看导入模型空间并清理未选用的旧模型。语音识别期间状态栏显示系统当前音频输入路线，暂不提供手动切换路线。完整改动与验证范围见 `CHANGELOG.md`、`TESTING.md` 和 `ROADMAP.md`。
+
+1. 安装交付的 `Loop-IME-0.1.14-alpha.15.apk`。系统必须是 Android 17 / API 37+，并允许本次 APK 安装。
 2. 打开“Loop 输入法”，依次点击“启用 Loop”和“选择 Loop”。
 3. 在“语音输入：百炼云端与离线模型”中允许麦克风，配置百炼 Key 或先下载离线模型；回到普通文本框长按空格，出现“正在听”后说话，松手结束。也可点击顶部麦克风图标进入连续模式，再点方形停止图标结束。
 4. 要使用文本 AI，打开“AI 连接与实时纠错”，填写 **DeepSeek 开放平台 API Key**，点击“保存 Key 并测试连接”，再开启“云端文本 AI”，保留“AI 九宫格候选”开关。默认地址和 DeepSeek Flash 模型已内置。其他服务仍可通过“高级设置：自定义 API”配置。
@@ -75,6 +81,7 @@ Android 17（API 37）及以上的原生中英 AI 输入法。版本 `0.1.12-alp
 
 ```bash
 # 配置 ANDROID_HOME 指向本机 SDK，或自行建立 local.properties（sdk.dir=...）。
+python3 scripts/materialize-dependencies.py
 ./gradlew :app:assembleRelease
 ./gradlew :app:testDebugUnitTest :app:lintDebug
 
@@ -104,7 +111,7 @@ export ANDROID_NDK_ROOT=/path/to/android-ndk-r28c
 | `NineKeyAi.kt` | 九宫格候选协议、读音校验、去抖、失效保护和字段内缓存 |
 | `AsrService.kt` | `:asr` 独立进程；同一工作线程内初始化、识别、端点和释放 |
 | `AiClient.kt`、`AiProtocol.kt`、`AiProfiles.kt`、`TextRules.kt` | HTTPS 适配、取消与超时、受限 JSON、纠错保护、后台关键词整理 |
-| `PersonalStore.kt`、`Vault.kt` | SQLCipher schema 2、Keystore、事务、来源证据、词库、记忆与剪贴板 |
+| `PersonalStore.kt`、`Vault.kt` | SQLCipher schema 3、Keystore、事务、来源证据、词库、记忆与剪贴板 |
 | `InputHistory.kt`、`DraftWriter.kt` | 成功编辑范围、分段及版本、加密待写日志、失败重试和进程重启恢复 |
 | `Backup.kt`、`ConnectionBackup.kt`、`RotationLock.kt` | 认证加密备份、临时旋转状态和恢复日志 |
 | `SettingsActivity.kt` | 安装引导、配置、权限、检索和数据管理 |
