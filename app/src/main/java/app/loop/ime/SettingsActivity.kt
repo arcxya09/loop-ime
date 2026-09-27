@@ -38,6 +38,15 @@ class SettingsActivity : Activity() {
     private var apiTest: AiCall?=null
     private var speechTest: CloudAsrStream?=null
     private var modelUiRefresh: (()->Unit)?=null
+    private var updateUiRefresh: (()->Unit)?=null
+    private val updateUiTick=object: Runnable {
+        override fun run() {
+            if(!modelUiVisible || isFinishing || isDestroyed)return
+            updateUiRefresh?.invoke()
+            if(page=="updates")AppUpdates.refresh(this@SettingsActivity)
+            LoopApp.main.postDelayed(this,1000)
+        }
+    }
     private var modelUiVisible=false
     private val modelUiTick=object: Runnable {
         override fun run() {
@@ -53,14 +62,15 @@ class SettingsActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         prefs=Prefs(this)
         savedInstanceState?.getString("pending_backup_uri")?.let { pendingBackup=savedInstanceState.getInt("pending_backup_code") to Uri.parse(it) }
-        when(savedInstanceState?.getString("page") ?: intent.getStringExtra("page")) { "api"->apiPage();"custom_api"->customApiPage();"speech"->speechPage();"offline_model"->offlineModelPage();"backup"->backupPage();"connection_backup"->connectionBackupPage();"data"->dataPage();"diagnostics"->diagnosticsPage();"database"->databasePage();else->home() }
+        when(savedInstanceState?.getString("page") ?: intent.getStringExtra("page")) { "updates"->updatesPage();"api"->apiPage();"custom_api"->customApiPage();"speech"->speechPage();"offline_model"->offlineModelPage();"backup"->backupPage();"connection_backup"->connectionBackupPage();"data"->dataPage();"diagnostics"->diagnosticsPage();"database"->databasePage();else->home() }
         if(intent.getBooleanExtra("microphone",false))requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),10)
     }
-    override fun onResume() { super.onResume();RotationLock(this).recover();modelUiVisible=true;LoopApp.main.removeCallbacks(modelUiTick);LoopApp.main.post(modelUiTick);if(pendingBackup!=null)askBackupPassword() }
-    override fun onStop() { modelUiVisible=false;LoopApp.main.removeCallbacks(modelUiTick);OfflineModels.pause();super.onStop() }
+    override fun onResume() { super.onResume();LoopApp.main.removeCallbacks(updateUiTick);LoopApp.main.post(updateUiTick);RotationLock(this).recover();modelUiVisible=true;LoopApp.main.removeCallbacks(modelUiTick);LoopApp.main.post(modelUiTick);if(pendingBackup!=null)askBackupPassword() }
+    override fun onStop() { LoopApp.main.removeCallbacks(updateUiTick);modelUiVisible=false;LoopApp.main.removeCallbacks(modelUiTick);OfflineModels.pause();super.onStop() }
     override fun onSaveInstanceState(out: Bundle) { out.putString("page",page);pendingBackup?.let { out.putInt("pending_backup_code",it.first);out.putString("pending_backup_uri",it.second.toString()) };super.onSaveInstanceState(out) }
-    override fun onDestroy() { backupPassword?.fill('\u0000');backupPassword=null;backupPrompt?.dismiss();backupPrompt=null;workDialogs.forEach { it.dismiss() };workDialogs.clear();screenRevision++;apiTest?.cancel();speechTest?.cancel();modelUiRefresh=null;LoopApp.main.removeCallbacks(modelUiTick);OfflineModels.pause();super.onDestroy() }
+    override fun onDestroy() { updateUiRefresh=null;LoopApp.main.removeCallbacks(updateUiTick);backupPassword?.fill('\u0000');backupPassword=null;backupPrompt?.dismiss();backupPrompt=null;workDialogs.forEach { it.dismiss() };workDialogs.clear();screenRevision++;apiTest?.cancel();speechTest?.cancel();modelUiRefresh=null;LoopApp.main.removeCallbacks(modelUiTick);OfflineModels.pause();super.onDestroy() }
     private fun layout(title: String, subtitle: String) {
+        updateUiRefresh=null
         screenRevision++;apiTest?.cancel();apiTest=null;speechTest?.cancel();speechTest=null
         modelUiRefresh=null;LoopApp.main.removeCallbacks(modelUiTick);if(page!="offline_model")OfflineModels.pause()
         root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(dp(22),dp(18),dp(22),dp(32));setBackgroundColor(Color.rgb(245,245,239)) }
@@ -150,8 +160,58 @@ class SettingsActivity : Activity() {
         space();label("试一下 Loop",18f,true)
         field("在这里试试拼音、语音或连续输入",multiline=true).apply { hint="你好，Loop。";id=R.id.test_input;imeOptions=EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING }
         label("此试写框为隐私字段，语音仅本地识别，不进入记忆、不调用云端。测试百炼语音和文本 AI 请使用普通文本框。",12f)
+        val updates=button("软件更新") { updatesPage() }
+        updateUiRefresh={ updates.text=if(AppUpdates.ready(this))"软件更新 · 已下载，点击安装" else AppUpdates.available(this)?.let { "软件更新 · 发现 ${it.version}" } ?: "软件更新" }
+        updateUiRefresh?.invoke()
         button("关于、开源许可与当前版本") { about() }
         label("${packageManager.getPackageInfo(packageName,0).versionName} · Android 17+",12f)
+    }
+    private fun updatesPage() {
+        page="updates";layout("软件更新","当前版本 ${AppUpdates.current(this)}\n从 arcxya09/loop-ime 的 GitHub Release 获取更新")
+        label("默认每天检查一次，系统可能因省电或网络状态推迟执行。自动下载仅使用 Wi-Fi；安装前仍需你在系统界面确认。更新检查不发送输入内容、词库或 API Key。",13f)
+        fun setting(title: String,key: String,value: Boolean) {
+            val view=Switch(this).apply { text=title;isChecked=value;textSize=16f;setTextColor(green);setPadding(0,dp(10),0,dp(10)) }
+            view.setOnCheckedChangeListener { _,on -> AppUpdates.configure(this,key,on) }
+            root.addView(view)
+        }
+        setting("每天自动检查更新","automatic",AppUpdates.enabled(this))
+        setting("发现新版后通过 Wi-Fi 自动下载","download",AppUpdates.autoDownload(this))
+        setting("接收 Alpha / 预发布版本","previews",AppUpdates.previews(this))
+        val state=label(AppUpdates.status(this),15f,true)
+        lateinit var check: Button
+        check=button("立即检查更新") {
+            check.isEnabled=false
+            AppUpdates.check(this,manual=true) { if(!isDestroyed)check.isEnabled=true }
+        }
+        val wifi=button("通过 Wi-Fi 下载 / 重试") { AppUpdates.download(this,false) }
+        val mobile=button("允许本次使用移动网络下载") {
+            val r=AppUpdates.available(this) ?: return@button
+            AlertDialog.Builder(this).setTitle("下载更新")
+                .setMessage("安装包约 ${r.bytes/1024/1024} MB。允许本次使用移动流量下载？已有下载会重新开始。")
+                .setPositiveButton("下载") { _,_->AppUpdates.download(this,true) }.setNegativeButton("取消",null).show()
+        }
+        lateinit var install: Button
+        install=button("安装更新") {
+            install.isEnabled=false
+            AppUpdates.install(this) { error -> install.isEnabled=true;if(error!=null)message(error) }
+        }
+        button("取消下载 / 清理安装包") { AppUpdates.discard(this) }
+        button("允许下载完成通知") { requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),30) }
+        button("打开 GitHub 发布页面") {
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(UpdateRelease.REPO+"/releases"))) }
+                .onFailure { message("无法打开浏览器，请访问 ${UpdateRelease.REPO}/releases") }
+        }
+        val notes=label("",13f)
+        updateUiRefresh={
+            state.text=AppUpdates.status(this)
+            val r=AppUpdates.available(this);val ready=AppUpdates.ready(this)
+            wifi.isEnabled=r!=null && !ready;mobile.isEnabled=r!=null && !ready
+            install.visibility=if(ready)View.VISIBLE else View.GONE
+            val text=if(r==null)"" else "${r.version} · ${r.bytes/1024/1024} MB\n\n${r.notes}"
+            if(notes.text.toString()!=text)notes.text=text
+        }
+        updateUiRefresh?.invoke();AppUpdates.refresh(this)
+        AppUpdates.check(this)
     }
     private fun apiPage() {
         page="api";layout("DeepSeek Flash","只需填写 DeepSeek 开放平台的 API Key。")
