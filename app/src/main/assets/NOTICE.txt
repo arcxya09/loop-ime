@@ -1,0 +1,22 @@
+Loop 输入法 0.1.10-alpha.11
+Copyright 2026 Loop contributors. GPL-3.0-or-later.
+本应用以 GNU GPL v3 或更新版本发布，不提供适销性或特定用途保证。
+完整对应源码、构建脚本和第三方许可随交付源码包提供。
+
+Rime / librime: Rime Developers, BSD-3-Clause.
+Trime native binary v3.3.12: Rime community, GPL-3.0-or-later.
+Luna Pinyin / Essay / Prelude dictionaries: Rime community, LGPL-3.0.
+sherpa-onnx 1.13.8: k2-fsa contributors, Apache-2.0.
+Zipformer bilingual zh-en 2023-02-20: csukuangfj / k2-fsa, Apache-2.0.
+ONNX Runtime: Microsoft, MIT.
+SQLCipher Community 4.10.0: Zetetic LLC, BSD-style license.
+OkHttp 4.12.0 / Okio 3.6.0: Square, Inc., Apache-2.0.
+Kotlin: JetBrains, Apache-2.0.
+AndroidX SQLite: Android Open Source Project, Apache-2.0.
+
+API keys are stored with Android Keystore. Personal records are encrypted locally.
+With cloud speech enabled, microphone audio streams to the selected Alibaba Cloud Model Studio region.
+Offline/private-field speech uses a separately downloaded model and is processed on device. Audio is not written to files.
+Model weights are not bundled. Optional verified downloads come from the model author on Hugging Face.
+Only explicitly enabled text AI features send eligible text to your configured HTTPS endpoint.
+With AI nine-key candidates enabled, the current phone-key code, recent eligible context and permitted lexicon hints are also sent. Suggestions require a tap to commit.

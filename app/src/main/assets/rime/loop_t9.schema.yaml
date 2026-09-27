@@ -1,0 +1,22 @@
+# Loop nine-key pinyin. The same Rime dictionary resolves ambiguous phone keys.
+__include: luna_pinyin_simp.schema:/
+schema:
+  schema_id: loop_t9
+  name: Loop 简体九宫格
+  version: '1.0'
+speller:
+  alphabet: '23456789'
+  delimiter: " '"
+  algebra:
+    - abbrev/^([a-z]).+$/$1/
+    - xlit/abcdefghijklmnopqrstuvwxyz/22233344455566677778889999/
+translator:
+  dictionary: luna_pinyin
+  prism: loop_t9
+  enable_user_dict: false
+  enable_sentence: true
+simplifier:
+  option_name: zh_simp
+  opencc_config: loop-t2s.json
+key_binder:
+  bindings: []

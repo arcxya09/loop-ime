@@ -1,0 +1,59 @@
+{
+  "format": 1,
+  "files": [
+    {
+      "path": "app/libs/sherpa-onnx-1.13.8.aar",
+      "size": 50129134,
+      "sha256": "633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96",
+      "parts": [
+        {
+          "path": "third_party/multipart/sherpa-onnx-1.13.8.aar/001.part",
+          "sha256": "06c09483d5bb70f23c039e29dfd203cd3c870028c5e5c5e98416105ec76971f6"
+        },
+        {
+          "path": "third_party/multipart/sherpa-onnx-1.13.8.aar/002.part",
+          "sha256": "3dc3ba0ae56351df86a1efa725774587f5420c90eb62bdbc702bc9ea179715a3"
+        },
+        {
+          "path": "third_party/multipart/sherpa-onnx-1.13.8.aar/003.part",
+          "sha256": "919e52c5a79e621b9d5403a38cb0bc9591013231e7297e650014bd9475eb1baf"
+        }
+      ]
+    },
+    {
+      "path": "third_party/boost-1.89.0-cmake.tar.xz",
+      "size": 102078704,
+      "sha256": "67acec02d0d118b5de9eb441f5fb707b3a1cdd884be00ca24b9a73c995511f74",
+      "parts": [
+        {
+          "path": "third_party/multipart/boost-1.89.0-cmake.tar.xz/001.part",
+          "sha256": "e92210f7696a5d1fea7ce5c0d1e0c6439c4a1ced88a24ccf11dcd496615e3384"
+        },
+        {
+          "path": "third_party/multipart/boost-1.89.0-cmake.tar.xz/002.part",
+          "sha256": "9861b3c555466d921d5ee3fcd3e2fcbaa60bfc899c109bb456a0a19612db020a"
+        },
+        {
+          "path": "third_party/multipart/boost-1.89.0-cmake.tar.xz/003.part",
+          "sha256": "1d6b8f2961ede2c8403789121c639923d40ed48071bc20cb1a6cd81819f56ff4"
+        },
+        {
+          "path": "third_party/multipart/boost-1.89.0-cmake.tar.xz/004.part",
+          "sha256": "a41c5317f1a329311bfe1bb0ae5dcee63b0e5ae8d779b7935a282ed9bbb84c6f"
+        },
+        {
+          "path": "third_party/multipart/boost-1.89.0-cmake.tar.xz/005.part",
+          "sha256": "42fc48af1771443f042777a74377bcf5f493555dd2da49456a7f697888e09b3a"
+        },
+        {
+          "path": "third_party/multipart/boost-1.89.0-cmake.tar.xz/006.part",
+          "sha256": "76162252ce0bcdd65c1286152072894d30ff84673aa5a8b06468bc8177177e13"
+        },
+        {
+          "path": "third_party/multipart/boost-1.89.0-cmake.tar.xz/007.part",
+          "sha256": "4d78bf97aabe3394cfa78dd6f82b2d0c135a3c46015a974c3b1d06caf166dad9"
+        }
+      ]
+    }
+  ]
+}
