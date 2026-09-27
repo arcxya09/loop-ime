@@ -16,11 +16,9 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import java.io.File
-import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.zip.ZipInputStream
 
 class SettingsActivity : Activity() {
     private lateinit var root: LinearLayout
@@ -43,23 +41,16 @@ class SettingsActivity : Activity() {
     private var screenRevision=0L
     private var apiTest: AiCall?=null
     private var speechTest: CloudAsrStream?=null
-    private var modelUiRefresh: (()->Unit)?=null
     private var updateUiRefresh: (()->Unit)?=null
     private val updateUiTick=object: Runnable {
         override fun run() {
-            if(!modelUiVisible || isFinishing || isDestroyed)return
+            if(!uiVisible || isFinishing || isDestroyed)return
             updateUiRefresh?.invoke()
             if(page=="updates")AppUpdates.refresh(this@SettingsActivity)
             LoopApp.main.postDelayed(this,1000)
         }
     }
-    private var modelUiVisible=false
-    private val modelUiTick=object: Runnable {
-        override fun run() {
-            if(!modelUiVisible || page!="offline_model" || isFinishing || isDestroyed)return
-            modelUiRefresh?.invoke();LoopApp.main.postDelayed(this,300)
-        }
-    }
+    private var uiVisible=false
     private fun dp(x: Int)=(x*resources.displayMetrics.density).toInt()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,14 +64,14 @@ class SettingsActivity : Activity() {
         navigate(savedInstanceState?.getString("page") ?: intent.getStringExtra("page") ?: "home")
         if(intent.getBooleanExtra("microphone",false))requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),10)
     }
-    override fun onResume() { super.onResume();LoopApp.main.removeCallbacks(updateUiTick);LoopApp.main.post(updateUiTick);RotationLock(this).recover();modelUiVisible=true;LoopApp.main.removeCallbacks(modelUiTick);LoopApp.main.post(modelUiTick);if(pendingBackup!=null)askBackupPassword() }
-    override fun onStop() { LoopApp.main.removeCallbacks(updateUiTick);modelUiVisible=false;LoopApp.main.removeCallbacks(modelUiTick);OfflineModels.pause();super.onStop() }
+    override fun onResume() { super.onResume();LoopApp.main.removeCallbacks(updateUiTick);LoopApp.main.post(updateUiTick);RotationLock(this).recover();uiVisible=true;if(pendingBackup!=null)askBackupPassword() }
+    override fun onStop() { LoopApp.main.removeCallbacks(updateUiTick);uiVisible=false;super.onStop() }
     override fun onSaveInstanceState(out: Bundle) { out.putString("page",page);out.putStringArrayList("back_stack",ArrayList(backStack));pendingBackup?.let { out.putInt("pending_backup_code",it.first);out.putString("pending_backup_uri",it.second.toString()) };super.onSaveInstanceState(out) }
-    override fun onDestroy() { updateUiRefresh=null;LoopApp.main.removeCallbacks(updateUiTick);backupPassword?.fill('\u0000');backupPassword=null;backupPrompt?.dismiss();backupPrompt=null;workDialogs.forEach { it.dismiss() };workDialogs.clear();screenRevision++;apiTest?.cancel();speechTest?.cancel();modelUiRefresh=null;LoopApp.main.removeCallbacks(modelUiTick);OfflineModels.pause();super.onDestroy() }
+    override fun onDestroy() { updateUiRefresh=null;LoopApp.main.removeCallbacks(updateUiTick);backupPassword?.fill('\u0000');backupPassword=null;backupPrompt?.dismiss();backupPrompt=null;workDialogs.forEach { it.dismiss() };workDialogs.clear();screenRevision++;apiTest?.cancel();speechTest?.cancel();super.onDestroy() }
     private fun navigate(destination: String) {
         when(destination) {
             "home"->home();"keyboard"->keyboardPage();"assist"->assistPage();"personal"->personalPage();"maintenance"->maintenancePage();"advanced"->advancedPage();"quick"->quickPage();"phrases"->phrasesPage()
-            "updates"->updatesPage();"api"->apiPage();"custom_api"->customApiPage();"speech"->speechPage();"offline_model"->offlineModelPage();"backup"->backupPage();"connection_backup"->connectionBackupPage();"data"->dataPage();"diagnostics"->diagnosticsPage();"database"->databasePage();"memories"->memoryPage();"terms"->termPage();"clipboard"->clipboardPage();else->home()
+            "updates"->updatesPage();"api"->apiPage();"custom_api"->customApiPage();"speech"->speechPage();"offline_model"->speechPage();"backup"->backupPage();"connection_backup"->connectionBackupPage();"data"->dataPage();"diagnostics"->diagnosticsPage();"database"->databasePage();"memories"->memoryPage();"terms"->termPage();"clipboard"->clipboardPage();else->home()
         }
     }
     private fun backPage() {
@@ -93,7 +84,6 @@ class SettingsActivity : Activity() {
         val restore=returning;returning=false;displayedPage=page
         updateUiRefresh=null
         screenRevision++;apiTest?.cancel();apiTest=null;speechTest?.cancel();speechTest=null
-        modelUiRefresh=null;LoopApp.main.removeCallbacks(modelUiTick);if(page!="offline_model")OfflineModels.pause()
         root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(dp(22),dp(18),dp(22),dp(32));setBackgroundColor(UiPalette.surface(this@SettingsActivity)) }
         val scroll=ScrollView(this).apply { isFillViewport=true;addView(root) };pageScroll=scroll;setContentView(scroll);if(restore)scroll.post { scroll.scrollTo(0,scrollPositions[page] ?: 0) }
         scroll.setOnApplyWindowInsetsListener { view,ins -> val b=ins.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime());view.setPadding(b.left,b.top,b.right,b.bottom);ins }
@@ -202,7 +192,7 @@ class SettingsActivity : Activity() {
     }
     private fun assistPage() {
         page="assist";layout("AI 与语音","按需启用，连接配置与状态集中管理")
-        button("AI 连接与实时纠错") { apiPage() };button("语音服务与离线模型") { speechPage() };button("验证码与快捷建议") { quickPage() }
+        button("AI 连接与实时纠错") { apiPage() };button("云端语音服务") { speechPage() };button("验证码与快捷建议") { quickPage() }
     }
     private fun personalPage() {
         page="personal";layout("个性化与隐私","词库学习与主动保存的短语分别管理")
@@ -405,63 +395,15 @@ class SettingsActivity : Activity() {
         label("纠错会保护数字、单位、否定词和已知专有词；不确定的改动显示为候选。AI 返回过慢或输入位置改变时放弃修改。可在键盘左上角 Loop 工具中选择“撤销 AI 修改”恢复。",13f)
     }
     private fun speechPage() {
-        page="speech";layout("说话，即输入","百炼云端优先，离线模型按需下载。")
-        label("长按空格触发语音，出现“正在听”即可说话。连接云端或加载本地模型期间也会缓存开头音频，无需等待识别服务就绪；松开立即停止录音，已录内容继续识别。短按空格仍选择候选或输入空格。也可点击顶部麦克风连续说话，再点停止图标结束；× 可取消尚未提交的尾句。",14f)
+        page="speech";layout("说话，即输入","百炼云端语音，需要联网及有效 Key。")
+        label("长按空格触发语音，出现“正在听”即可说话。连接云端期间也会缓存开头音频，无需等待识别服务就绪；松开立即停止录音，已录内容继续识别。短按空格仍选择候选或输入空格。也可点击顶部麦克风连续说话，再点停止图标结束；× 可取消尚未提交的尾句。",14f)
         cloudSpeechSettings()
-        space();label("离线识别",20f,true)
-        button("离线模型：下载与管理") { offlineModelPage() }
         prefs.text("speech_last_error").takeIf { it.isNotBlank() }?.let { label("最近一次语音错误：$it",13f) }
-        label("本地模式：16 kHz 单声道 · 词库热词\n停顿约 0.65 秒后分段，连续长句每 10 秒整理。识别速度和准确率取决于设备、口音和录音环境。",14f)
         button(if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)"麦克风权限已允许" else "允许麦克风") { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),10) }
         toggle("停顿处自动添加句末标点","punctuation",true)
         toggle("语音期间锁定屏幕方向","rotation")
         button("授予临时锁定方向所需的系统设置权限") { startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,Uri.parse("package:$packageName"))) }
         label("停止语音后恢复原来的自动旋转设置。系统或当前应用可能覆盖方向请求；无法授权时仍可录音。",13f)
-    }
-    private fun offlineModelPage() {
-        page="offline_model";layout("离线语音模型","只在需要本地识别时下载。")
-        offlineModelControls()
-        space();label("自定义模型",18f,true)
-        button("导入兼容的离线模型 ZIP") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/zip").addCategory(Intent.CATEGORY_OPENABLE),24) }
-        label("高级导入：ZIP 根目录需有 encoder.onnx、decoder.onnx、joiner.onnx、tokens.txt、bpe.vocab 和 manifest.json。支持 streaming Zipformer transducer，中英 cjkchar+bpe；manifest.json 必须列出每个文件的 SHA-256。",12f)
-        button("返回语音设置") { speechPage() }
-    }
-    private fun offlineModelControls() {
-        val model=OfflineModels.pack(this)
-        val selected=label("",16f,true)
-        label("中英双语离线包 · 约 190 MiB。使用云端语音无需下载；下载后可在断网、隐私模式中使用本地识别。",14f)
-        val status=label("",13f).apply { id=R.id.offline_model_status }
-        val progress=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply { max=1000;id=R.id.offline_model_progress }
-        root.addView(progress,LinearLayout.LayoutParams(-1,dp(12)))
-        val download=button("下载离线模型") { OfflineModels.download(this);modelUiRefresh?.invoke() }.apply { id=R.id.offline_model_download }
-        val pause=button("暂停下载") { OfflineModels.pause();modelUiRefresh?.invoke() }
-        val useRecommended=button("使用已下载的推荐模型") { prefs.set("custom_model","");modelUiRefresh?.invoke() }
-        val remove=button("删除已下载模型") { OfflineModels.remove(this);modelUiRefresh?.invoke() }
-        val importedSize=label("正在统计导入模型空间…",12f)
-        LoopApp.background(this,{ val bytes=ModelStorage(noBackupFilesDir,prefs.text("custom_model")).bytes();runOnUiThread { importedSize.text="导入模型占用：${bytes/(1024*1024)} MiB" } })
-        button("清理未使用的导入模型") { work("清理旧模型…",files=true) {
-            val count=ModelStorage(noBackupFilesDir,prefs.text("custom_model")).clearUnused()
-            "已清理 $count 个旧模型，当前选择的模型保留。"
-        } }
-        label("下载期间请保持本页打开；离开页面会暂停，回来可继续。来自模型作者的 Hugging Face 仓库，无需 Key；逐文件校验后启用，下载中断不影响云端语音。",12f)
-        modelUiRefresh={
-            val state=OfflineModels.status;val installed=model.installed();val cached=model.cachedBytes()
-            selected.text=when {
-                prefs.text("custom_model").isNotBlank() -> "当前使用：已导入的自定义模型"
-                installed -> "当前使用：中英双语离线模型"
-                else -> "离线模型尚未下载"
-            }
-            status.text=if(state.busy)"${state.message} · ${state.bytes*100/model.total}%" else if(state.message.isNotBlank())state.message else if(installed)"已下载并校验，可离线识别" else if(cached>0)"已下载 ${cached*100/model.total}%，可以继续" else "只用云端语音时，可跳过下载"
-            progress.visibility=if(state.busy || cached>0)View.VISIBLE else View.GONE
-            progress.progress=((if(state.busy)state.bytes else cached)*1000/model.total).toInt()
-            download.isEnabled=!state.busy && !installed;download.text=if(installed)"离线模型已下载" else if(cached>0)"继续下载离线模型" else "下载离线模型 · 190 MiB"
-            pause.visibility=if(state.busy)View.VISIBLE else View.GONE
-            useRecommended.visibility=if(prefs.text("custom_model").isNotBlank())View.VISIBLE else View.GONE
-            useRecommended.isEnabled=installed && !state.busy
-            remove.visibility=if(installed || cached>0)View.VISIBLE else View.GONE;remove.isEnabled=!state.busy
-            remove.text=if(installed)"删除已下载模型" else "清除下载缓存"
-        }
-        modelUiRefresh?.invoke();if(modelUiVisible)LoopApp.main.post(modelUiTick)
     }
     private fun cloudSpeechSettings() {
         lateinit var cloudToggle: Switch
@@ -471,8 +413,8 @@ class SettingsActivity : Activity() {
         val profile=loaded.getOrNull()
         label("阿里云百炼",20f,true)
         label(CloudAsrProfile.MODEL,12f)
-        label("保存 Key 后优先使用云端。录音实时发送到所选地域的百炼接口；本机不保存音频。已下载离线模型时，断网自动转为本地识别；尚未下载时会停止并提示下载入口。网络恢复后，下次语音重新优先使用云端。",14f)
-        label("密码框禁用语音；隐私模式及应用标记的隐私输入框始终使用本地识别。Key 无效、额度不足会直接提示。",12f)
+        label("保存 Key 并启用后使用云端语音。录音实时发送到所选地域的百炼接口；本机不保存音频。断网或传输失败时停止录音，保留已确认文字；联网后可重新开始。",14f)
+        label("密码框、隐私模式及应用标记的隐私输入框禁用语音。Key 无效、额度不足会直接提示。",12f)
         button("地域："+if(region=="singapore")"新加坡" else "北京（默认）") {
             AlertDialog.Builder(this).setTitle("选择百炼 Key 所属地域").setItems(arrayOf("北京","新加坡")) { _,i ->
                 prefs.set("speech_region",CloudAsrProfile.REGIONS[i]);speechPage()
@@ -485,11 +427,11 @@ class SettingsActivity : Activity() {
         val status=label(when {
             loaded.isFailure -> "已保存的百炼 Key 暂时无法读取，可以重新填写保存。"
             profile!=null -> "此地域 Key 已加密保存，覆盖安装后继续保留；留空不会删除。"
-            else -> "填写百炼 Key 后保存；下载离线模型后，也可不使用 Key 进行本地语音输入。"
+            else -> "填写百炼 Key 后保存并启用云端语音。"
         },13f).apply { id=R.id.speech_api_status }
-        button("保存 Key 并启用云端优先") {
+        button("保存 Key 并启用云端语音") {
             val value=key.text.toString()
-            work("正在加密保存百炼 Key…") { settings.save(value,region);runOnUiThread { cloudToggle.isChecked=true;status.text="百炼 Key 已加密保存，云端优先已启用。" };"已保存并启用百炼云端优先。回到普通文本框即可开始语音。" }
+            work("正在加密保存百炼 Key…") { settings.save(value,region);runOnUiThread { cloudToggle.isChecked=true;status.text="百炼 Key 已加密保存，云端语音已启用。" };"已保存并启用百炼云端语音。回到普通文本框即可开始语音。" }
         }
         lateinit var test: Button
         test=button("保存并测试百炼连接") {
@@ -520,9 +462,9 @@ class SettingsActivity : Activity() {
                 }
             } } catch(_: java.util.concurrent.RejectedExecutionException) { status.text="语音设置繁忙，请稍后重试。";test.isEnabled=true }
         }.apply { id=R.id.speech_api_test }
-        cloudToggle=toggle("优先使用百炼云端识别","speech_cloud")
+        cloudToggle=toggle("启用百炼云端语音","speech_cloud")
         toggle("云端使用已允许上传的个人词条","speech_cloud_terms",true)
-        label("通讯录和标记为仅本地的词条不作为云端热词上传；本地识别仍使用完整词库。连接测试仅发送半秒合成静音，不使用麦克风或输入历史。",12f)
+        label("通讯录和标记为仅本地的词条不作为云端热词上传。连接测试仅发送半秒合成静音，不使用麦克风或输入历史。",12f)
     }
     private fun dataPage() {
         page="data";layout("记忆与词库","保存你的表达，积累你常用的名字与术语。")
@@ -534,7 +476,7 @@ class SettingsActivity : Activity() {
         button("搜索与管理输入记忆") { memoryOffset=0;memoryQuery="";memoryPage() }
         button("个人词库：搜索、添加、遗忘") { termPage() }
         button("导入通讯录姓名（仅本地）") {
-            AlertDialog.Builder(this).setTitle("导入通讯录姓名").setMessage("读取联系人显示姓名并生成拼音，用于手动输入候选和本地语音热词。不导入电话、邮箱或照片；不会发送给 AI API。")
+            AlertDialog.Builder(this).setTitle("导入通讯录姓名").setMessage("读取联系人显示姓名并生成拼音，用于手动输入候选。不导入电话、邮箱或照片；不会发送给 AI API。")
                 .setPositiveButton("导入") { _,_->if(checkSelfPermission(Manifest.permission.READ_CONTACTS)==PackageManager.PERMISSION_GRANTED)importContacts() else requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS),11) }.setNegativeButton("取消",null).show()
         }
         button("删除通讯录导入及其词库贡献") { confirm("删除已导入的联系人词条？其他来源仍在使用的词条保留。") { work("正在清理…") { PersonalStore.get(this).deleteContacts();"已删除通讯录来源。" } } }
@@ -568,7 +510,7 @@ class SettingsActivity : Activity() {
         }) { err -> if(err!=null)status.text="读取失败：$err" }
     }
     private fun termPage(q: String="",offset: Int=0) {
-        page="terms";layout("个人词库","同一套词条，为拼音候选和本地语音热词提供帮助。")
+        page="terms";layout("个人词库","同一套词条，为拼音候选提供帮助。")
         val word=field("词条");val py=field("拼音（可留空自动生成；多音字建议手动修改）")
         button("添加 / 更新词条") { val w=word.text.toString();val p=py.text.toString();work("保存词条…") { require(TextRules.cleanTerm(w)!=null) { "词条需 2–32 字" };PersonalStore.get(this).addTerm(w,p,explicit=true);"词条已保存，仅本地使用。" } }
         val revision=screenRevision
@@ -709,7 +651,6 @@ class SettingsActivity : Activity() {
                 write -> contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             }
         }
-        if(requestCode==24) { importModel(uri);return }
         if(requestCode !in setOf(20,21,22,30,31))return
         val pass=backupPassword
         backupPassword=null
@@ -762,36 +703,10 @@ class SettingsActivity : Activity() {
             contentResolver.openOutputStream(uri,"wt")!!.use { target -> encrypted.inputStream().use { it.copyTo(target) } }
         } finally { encrypted.delete() }
     }
-    private fun importModel(uri: Uri) {
-        work("验证并导入模型…",files=true) {
-            val staging=File(noBackupFilesDir,"model-import-${System.nanoTime()}").apply { mkdirs() }
-            val required=setOf("encoder.onnx","decoder.onnx","joiner.onnx","tokens.txt","bpe.vocab","manifest.json")
-            try {
-                var total=0L;val seen=mutableSetOf<String>()
-                ZipInputStream(contentResolver.openInputStream(uri)).use { zip ->
-                    while(true) { val entry=zip.nextEntry ?: break
-                        require(entry.name in required && !entry.isDirectory && seen.add(entry.name)) { "模型包结构不兼容" }
-                        val limit=when(entry.name) { "manifest.json"->10000L;"tokens.txt","bpe.vocab"->20L*1024*1024;else->600L*1024*1024 }
-                        var entryBytes=0L
-                        File(staging,entry.name).outputStream().use { out -> val buf=ByteArray(65536);while(true) { val n=zip.read(buf);if(n<0)break;total+=n;entryBytes+=n;require(total<=800L*1024*1024 && entryBytes<=limit) { "模型文件大小超限" };out.write(buf,0,n) } }
-                    }
-                }
-                require(seen==required) { "模型文件不完整" }
-                val manifest=org.json.JSONObject(File(staging,"manifest.json").readText().also { require(it.length<10000) })
-                for(name in required-"manifest.json") {
-                    val digest=MessageDigest.getInstance("SHA-256");File(staging,name).inputStream().use { input -> val b=ByteArray(65536);while(true) { val n=input.read(b);if(n<0)break;digest.update(b,0,n) } }
-                    val hash=digest.digest().joinToString("") { "%02x".format(it) };require(hash==manifest.getString(name).lowercase()) { "$name 校验失败" }
-                }
-                prefs.set("custom_model",staging.path)
-                runOnUiThread { modelUiRefresh?.invoke() }
-                "模型文件校验通过。请收起并重新打开键盘；若模型接口不兼容，可下载并选择推荐模型。"
-            } catch(t: Throwable) { staging.deleteRecursively();throw t }
-        }
-    }
     private fun about() {
         page="about";layout("Loop 输入法","${packageManager.getPackageInfo(packageName,0).versionName} · Android 17 / API 37+ · arm64-v8a / x86_64")
-        label("本版本提供可安装的输入法、离线拼音、百炼云端与本地中英流式语音、自定义文本 API、记忆词库、通讯录导入、剪贴板和密码备份。手机上的语音准确率、延迟、续航与不同应用兼容性仍需实际验证。",15f)
-        label("GPL-3.0-or-later 开源。使用 Rime / Trime 原生引擎、sherpa-onnx、ONNX Runtime、SQLCipher、Kotlin 与 AndroidX。模型为 Apache-2.0。完整许可和构建来源见随源码提供的 THIRD_PARTY_NOTICES.md。",14f)
+        label("本版本提供可安装的输入法、离线拼音、百炼云端中英流式语音、自定义文本 API、记忆词库、通讯录导入、剪贴板和密码备份。手机上的语音准确率、延迟、续航与不同应用兼容性仍需实际验证。",15f)
+        label("GPL-3.0-or-later 开源。使用 Rime / Trime 原生引擎、SQLCipher、Kotlin 与 AndroidX。完整许可和构建来源见随源码提供的 THIRD_PARTY_NOTICES.md。",14f)
         button("查看内置开源声明") { message(assets.open("NOTICE.txt").bufferedReader().use { it.readText() }) }
     }
 }

@@ -10,10 +10,7 @@ import android.text.Selection
 import android.text.SpannableStringBuilder
 import android.view.View
 import android.view.inputmethod.BaseInputConnection
-import com.k2fsa.sherpa.onnx.*
 import java.io.*
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.security.KeyStore
@@ -113,21 +110,6 @@ class LoopInstrumentation : Instrumentation() {
                 for(ch in "64426") { val l=CountDownLatch(1);engine.event(ch.code) { state=it;l.countDown() };check(l.await(15,TimeUnit.SECONDS)) }
                 check("你好" in state.candidates) { "Rime candidate missing" }
                 val l=CountDownLatch(1);engine.event(state.candidates.indexOf("你好"),1) { state=it;l.countDown() };check(l.await(15,TimeUnit.SECONDS));check(state.commit=="你好")
-            }
-            checkCase("downloaded streaming ASR / real sample / hotwords") {
-                val path=OfflineModels.activePath(targetContext) ?: error("Download an offline model in Loop speech settings before running the full device suite")
-                val config=OnlineRecognizerConfig(modelConfig=OnlineModelConfig(transducer=OnlineTransducerModelConfig("$path/encoder.onnx","$path/decoder.onnx","$path/joiner.onnx"),tokens="$path/tokens.txt",numThreads=2,modelType="zipformer",modelingUnit="cjkchar+bpe",bpeVocab="$path/bpe.vocab"),decodingMethod="modified_beam_search",enableEndpoint=false,maxActivePaths=4)
-                val r=OnlineRecognizer(null,config);val s=r.createStream("语音识别\n输入法")
-                try {
-                    val wav=context.assets.open("sample.wav").use { it.readBytes() }
-                    val b=ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN);var offset=12;var start=0;var length=0
-                    while(offset+8<=wav.size) { val tag=String(wav,offset,4,Charsets.US_ASCII);val size=b.getInt(offset+4);if(tag=="data") { start=offset+8;length=size;break };offset+=8+size+(size%2) }
-                    check(start>0 && length>0)
-                    var n=0;var partialSeen=false
-                    while(n<length/2) { val count=minOf(1280,length/2-n);val pcm=FloatArray(count) { b.getShort(start+2*(n+it))/32768f };n+=count;s.acceptWaveform(pcm,16000);while(r.isReady(s))r.decode(s);if(r.getResult(s).text.isNotBlank())partialSeen=true }
-                    s.acceptWaveform(FloatArray(8000),16000);s.inputFinished();while(r.isReady(s))r.decode(s)
-                    val text=r.getResult(s).text;check(partialSeen && text.isNotBlank());report.append("ASR public fixture result: $text\n")
-                } finally { s.release();r.release() }
             }
             finish(Activity.RESULT_OK,Bundle().apply { putString("stream",report.toString());putString("result","PASS") })
         } catch(t: Throwable) {

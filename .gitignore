@@ -16,5 +16,4 @@ verification/
 *.db-shm
 *.log
 # Restored by scripts/materialize-dependencies.py from checked-in, verified chunks.
-app/libs/sherpa-onnx-1.13.8.aar
 third_party/boost-1.89.0-cmake.tar.xz

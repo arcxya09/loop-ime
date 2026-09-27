@@ -174,11 +174,11 @@ class NineKeyImeTest {
         }
         fun emit(kind: Int,text: String)=ReflectionHelpers.callInstanceMethod<Unit>(f.service,"onSpeech",ClassParameter.from(Int::class.javaPrimitiveType,kind),ClassParameter.from(String::class.java,text))
         val before=height()
-        for(kind in listOf(SpeechWire.DONE,SpeechWire.ERROR,SpeechWire.MODEL_REQUIRED)) {
+        for(kind in listOf(SpeechWire.DONE,SpeechWire.ERROR)) {
             ReflectionHelpers.setField(f.service,"latestText","个人")
             ReflectionHelpers.setField(f.service,"voice",true);ReflectionHelpers.setField(f.service,"speechDone",false);f.keyboard.voice(true)
             emit(SpeechWire.READY,"正在听");assertEquals(before,height())
-            emit(kind,if(kind==SpeechWire.MODEL_REQUIRED)"请下载离线模型" else "识别失败")
+            emit(kind,"识别失败")
             assertEquals(before,height());assertFalse(ReflectionHelpers.getField(f.service,"voice"))
             assertTrue("Missing continuation after speech event $kind",all(f.keyboard.findViewWithTag("candidate_strip")).filterIsInstance<TextView>().any { it.text=="词" })
         }

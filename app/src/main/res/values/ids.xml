@@ -8,9 +8,6 @@
     <item name="speech_api_key" type="id" />
     <item name="speech_api_status" type="id" />
     <item name="speech_api_test" type="id" />
-    <item name="offline_model_status" type="id" />
-    <item name="offline_model_progress" type="id" />
-    <item name="offline_model_download" type="id" />
     <item name="diagnostics_content" type="id" />
     <item name="diagnostics_copy" type="id" />
     <item name="diagnostics_export" type="id" />

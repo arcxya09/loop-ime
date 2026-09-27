@@ -32,9 +32,6 @@ class LoopImeService : InputMethodService() {
     private var voiceHeld=false
     private var speechStarted=false
     private var voiceGeneration=0L
-    private var speechTerms=emptyList<String>()
-    private var cloudSpeechTerms=emptyList<String>()
-    private var speechTermsRevision=-1L
     private var lastOrientation=android.content.res.Configuration.ORIENTATION_UNDEFINED
     private var partial=""
     private var voicePrevious=""
@@ -60,7 +57,7 @@ class LoopImeService : InputMethodService() {
     private val history=InputHistory { DraftWriter.get(this).offer(it) }
     private var symbolsMode=false
     private var voiceRecovery=""
-    private val storeChanged: ()->Unit = { if(::prefs.isInitialized) { refreshTerms();refreshSpeechTerms() } }
+    private val storeChanged: ()->Unit = { if(::prefs.isInitialized) { refreshTerms() } }
     private var clipLast=""
     private var observedClip=""
     private var observedClipTime=0L
@@ -124,7 +121,7 @@ class LoopImeService : InputMethodService() {
         if(LoopApp.unlocked(this)) { prefs=Prefs(this);nineKey=prefs.flag("chinese_t9",true);rime.layout(nineKey) }
         if(LoopApp.unlocked(this) && !rime.ready)rime.prepare { error -> if(::keyboard.isInitialized)keyboard.status(error ?: "拼音已就绪") }
         cloudBlocked=restricted;chinese=klass==InputType.TYPE_CLASS_TEXT && variation !in setOf(InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,InputType.TYPE_TEXT_VARIATION_URI) && !passwordField
-        latestText="";recentWrites.clear();undo=null;history.clear();symbolsMode=false;refreshTerms();refreshSpeechTerms()
+        latestText="";recentWrites.clear();undo=null;history.clear();symbolsMode=false;refreshTerms()
     }
     override fun onStartInputView(info: EditorInfo,restarting: Boolean) {
         super.onStartInputView(info,restarting);visible=true;LoopApp.keyboardVisible=true
@@ -186,7 +183,7 @@ class LoopImeService : InputMethodService() {
         if(key=="voice_hold_start") { if(holdRequested)startVoice(true,done) else done();return }
         if(key=="mic") { if(voice) { finishVoiceCapture();done() } else startVoice(false,done);return }
         if(key=="cancel_voice") { cancelVoice(true);done();return }
-        if(key in setOf("settings","ai_settings","speech_settings","offline_model_settings","phrase_settings","quick_settings","keyboard_settings")) { stopForNavigation();startActivity(Intent(this,SettingsActivity::class.java).putExtra("page",when(key) { "ai_settings"->"api";"speech_settings"->"speech";"offline_model_settings"->"offline_model";"phrase_settings"->"phrases";"quick_settings"->"quick";"keyboard_settings"->"keyboard";else->"home" }).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));done();return }
+        if(key in setOf("settings","ai_settings","speech_settings","phrase_settings","quick_settings","keyboard_settings")) { stopForNavigation();startActivity(Intent(this,SettingsActivity::class.java).putExtra("page",when(key) { "ai_settings"->"api";"speech_settings"->"speech";"phrase_settings"->"phrases";"quick_settings"->"quick";"keyboard_settings"->"keyboard";else->"home" }).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));done();return }
         if(key=="hide") { requestHideSelf(0);done();return }
         if(key=="app_privacy") {
             val pkg=currentInputEditorInfo?.packageName.orEmpty()
@@ -386,18 +383,6 @@ class LoopImeService : InputMethodService() {
             }
         }
     }
-    private fun refreshSpeechTerms() {
-        speechTerms=emptyList();cloudSpeechTerms=emptyList();speechTermsRevision=-1
-        if(!LoopApp.unlocked(this) || restricted || prefs.privateMode)return
-        val epoch=fieldEpoch
-        val revision=StoreEvents.revision
-        LoopApp.background(this,{
-            val store=PersonalStore.get(this)
-            val words=store.terms(limit=64).map { it.text }
-            val cloudWords=store.cloudSpeechHints()
-            LoopApp.main.post { if(epoch==fieldEpoch && revision==StoreEvents.revision && !restricted && !prefs.privateMode) { speechTerms=words;cloudSpeechTerms=cloudWords;speechTermsRevision=revision } }
-        }) // Optional hints: storage failure must never prevent microphone startup.
-    }
     private fun personalCandidates(): List<Term> {
         if(state.raw.isEmpty() || state.selStart!=0 || state.caret!=state.raw.length)return emptyList()
         val key=RankKey(state.raw,nineKey,latestText,history.revision,prefs.learning,prefs.privateMode,restricted,System.currentTimeMillis()/60000)
@@ -520,7 +505,7 @@ class LoopImeService : InputMethodService() {
     }
     private fun startVoice(held: Boolean, done: ()->Unit) {
         if(voice || !visible || (held && !holdRequested)) { done();return }
-        if(passwordField || !LoopApp.unlocked(this)) { keyboard.status("此输入框不启用语音");done();return }
+        if(passwordField || restricted || prefs.privateMode || !LoopApp.unlocked(this)) { keyboard.status("此输入框不启用语音");done();return }
         if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)!=android.content.pm.PackageManager.PERMISSION_GRANTED) {
             startActivity(Intent(this,SettingsActivity::class.java).putExtra("microphone",true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));done();return
         }
@@ -528,16 +513,8 @@ class LoopImeService : InputMethodService() {
         cancelAi();flushDraft();latestText="";voice=true;voiceHeld=held;speechStarted=false;stoppingVoice=false;speechDone=false;partial="";voicePrevious="";voiceQueue.clear();keyboard.voice(true)
         keyboard.status(if(held)"正在准备语音 · 松开空格结束" else "正在准备语音…")
         voiceGeneration++
-        val localOnly=prefs.privateMode || restricted
-        val cached=speechTermsRevision==StoreEvents.revision
-        val words=if(localOnly || !cached)emptyList() else speechTerms
-        // Revalidate cloud permission on the configuration worker even when local hints are cached.
-        val vocabulary:(()->Pair<List<String>,List<String>>)?=if(localOnly)null else ({
-            val store=PersonalStore.get(this)
-            store.terms(limit=64).map { it.text } to if(prefs.flag("speech_cloud_terms",true))store.cloudSpeechHints() else emptyList()
-        })
         speechStarted=true
-        speech.start(words,allowCloud=!localOnly,cloudWords=emptyList(),vocabulary=vocabulary)
+        speech.start(vocabulary={ if(prefs.flag("speech_cloud_terms",true))PersonalStore.get(this).cloudSpeechHints() else emptyList() })
         done()
     }
     private fun finishVoiceCapture() {
@@ -553,10 +530,10 @@ class LoopImeService : InputMethodService() {
             SpeechWire.PARTIAL -> { partial=text;drawTranscript();if(!stoppingVoice)keyboard.status("正在听 · ${speech.recognitionLabel} · ${speech.inputRouteLabel}"+if(voiceHeld)" · 松开结束" else "") }
             SpeechWire.FINAL -> queueSegment(text)
             SpeechWire.DONE -> { partial="";stoppingVoice=true;speechDone=true;drainVoice();finishVoiceIfReady() }
-            SpeechWire.ERROR,SpeechWire.MODEL_REQUIRED -> {
+            SpeechWire.ERROR -> {
                 voiceQueue.forEach { it.ready=true;it.call?.cancel() };partial="";drainVoice();cancelVoice(true)
                 if(voiceRecovery.isEmpty())renderCandidates()
-                if(kind==SpeechWire.MODEL_REQUIRED)keyboard.status(text) { enqueue("offline_model_settings") } else keyboard.status(text)
+                keyboard.status(text)
                 prefs.set("speech_last_error",text)
             }
         }
