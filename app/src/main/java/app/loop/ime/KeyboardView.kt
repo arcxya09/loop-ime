@@ -37,6 +37,11 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         }
     }
     private lateinit var aiButton: KeyboardIcon
+    private lateinit var toolsButton: KeyboardIcon
+    private var aiMessage=""
+    private val clearAiMessage=Runnable {
+        aiMessage="";toolsButton.tint=ink;toolsButton.contentDescription="Loop 工具与设置";toolsButton.invalidate()
+    }
     private val candidates=LinearLayout(c)
     private var touchingCandidates=false
     private var deferredCandidates: Pair<List<Pair<String,()->Unit>>,Set<String>>?=null
@@ -105,7 +110,10 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
             val v=icon(code,description,Color.TRANSPARENT,action)
             toolbar.addView(v,LayoutParams(dp(42),dp(42)));return v
         }
-        tool("tools","Loop 工具与设置") { key("tools") }
+        toolsButton=tool("tools","Loop 工具与设置") { key("tools") }
+        toolsButton.setOnLongClickListener {
+            if(aiMessage.isEmpty())false else { Toast.makeText(context,aiMessage,Toast.LENGTH_LONG).show();true }
+        }
         val strip=FrameLayout(c).apply { tag="candidate_strip" }
         labelStyle(status,11,9);status.setTextColor(muted);status.gravity=Gravity.CENTER_VERTICAL
         status.setPadding(dp(5),0,dp(5),0);status.tag="keyboard_status"
@@ -146,7 +154,7 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         }
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow();requestApplyInsets() }
-    override fun onDetachedFromWindow() { removeCallbacks(clearNotice);showNotice=false;super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { removeCallbacks(clearNotice);removeCallbacks(clearAiMessage);clearAiMessage.run();showNotice=false;super.onDetachedFromWindow() }
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if(event.actionMasked==MotionEvent.ACTION_DOWN)discardMultiTouch=false
         if(event.actionMasked==MotionEvent.ACTION_POINTER_DOWN && spaceKey?.tracking==true) { discardMultiTouch=true;cancelSpaceGesture() }
@@ -207,6 +215,12 @@ class KeyboardView(c: Context,private val key: (String)->Unit) : LinearLayout(c)
         separator.visibility=if(showCandidates && chinese && !symbols)View.VISIBLE else View.GONE
         aiButton.visibility=if(showCandidates || isVoice || showNotice)View.GONE else View.VISIBLE
         clipButton.visibility=if(showCandidates || (showNotice && !isVoice))View.GONE else View.VISIBLE
+    }
+    /** Background AI failures must not resize the keyboard or displace a candidate under a finger. */
+    fun aiStatus(s: String) {
+        aiMessage=s;toolsButton.tint=0xffa06520.toInt()
+        toolsButton.contentDescription="Loop 工具与设置；$s；长按查看"
+        toolsButton.invalidate();removeCallbacks(clearAiMessage);postDelayed(clearAiMessage,8000)
     }
     fun status(s: String,action: (()->Unit)?=null) {
         composing=false;statusText=s;statusAction=action;removeCallbacks(clearNotice)

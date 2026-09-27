@@ -1,0 +1,3 @@
+# Keep vendored dictionaries byte-identical to the pinned upstream source.
+app/src/main/assets/rime/cn_dicts/*.dict.yaml -text
+app/src/main/assets/licenses/rime-frost-GPL-3.0.txt -text

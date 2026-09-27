@@ -1,0 +1,14 @@
+# Loop selection of unmodified Rime Frost tables, 2026-09-27.
+# Upstream: gaboolic/rime-frost @ 3ad2cb34e3c5763ba3f8da0a617fcaa221b355aa
+# GPL-3.0; table authors and original source notices remain in cn_dicts/.
+---
+name: loop_frost
+version: '2026.09.27'
+sort: by_weight
+use_preset_vocabulary: false
+import_tables:
+  - cn_dicts/8105
+  - cn_dicts/41448
+  - cn_dicts/base
+  - cn_dicts/ext
+...

@@ -28,15 +28,16 @@ class RimeEngine(private val c: Context,private val nativeEvent: (Int,Int)->Byte
         synchronized(this) { if(ready) { LoopApp.main.post { callback(null) };return };if(preparing)return;preparing=true }
         serial.execute {
             val error=runCatching {
-                val shared=File(c.noBackupFilesDir,"rime/shared");val user=File(c.noBackupFilesDir,"rime/user");user.mkdirs()
-                val marker=File(shared,".loop-v3")
+                // Separate compiled dictionary caches; preserve all earlier Rime and personal data.
+                val shared=File(c.noBackupFilesDir,"rime/frost-v1/shared");val user=File(c.noBackupFilesDir,"rime/frost-v1/user");user.mkdirs()
+                val marker=File(shared,".loop-frost-v1")
                 if(!marker.exists()) {
                     copy("rime",shared)
                     File(shared,"default.custom.yaml").writeText("patch:\n  schema_list:\n    - schema: loop_t9\n    - schema: luna_pinyin_simp\n  menu/page_size: 9\n")
                     File(shared,"luna_pinyin_simp.custom.yaml").writeText("patch:\n  translator/enable_user_dict: false\n  translator/enable_sentence: true\n  switches/@0/reset: 0\n")
                 }
                 check(RimeNative.init(shared.path,user.path)) { "拼音字典部署失败" }
-                nativeEvent(if(nineKey)1 else 0,4);marker.writeText("3");ready=true
+                nativeEvent(if(nineKey)1 else 0,4);marker.writeText("1");ready=true
             }.exceptionOrNull()?.let { "拼音加载失败：${it.javaClass.simpleName}" }
             preparing=false
             LoopApp.main.post { callback(error) }

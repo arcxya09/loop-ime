@@ -69,7 +69,7 @@ class LoopImeService : InputMethodService() {
         window.window?.let(ImeAppearance::apply)
         editor=SafeEditor { currentInputConnection };rime=RimeEngine(this)
         if(LoopApp.unlocked(this))prefs=Prefs(this)
-        nineAi=NineKeyAiSession({ query,callback -> AiClient(this).nineKey(query,callback) },::nineKeyAiAllowed,::renderCandidates,status={ if(visible && ::keyboard.isInitialized)keyboard.status(it) })
+        nineAi=NineKeyAiSession({ query,callback -> AiClient(this).nineKey(query,callback) },::nineKeyAiAllowed,::renderCandidates,status={ if(visible && ::keyboard.isInitialized)keyboard.aiStatus(it) })
         speech=SpeechController(this,::onSpeech)
         StoreEvents.add(storeChanged)
         if(LoopApp.unlocked(this))DraftWriter.get(this).recover()
@@ -392,7 +392,7 @@ class LoopImeService : InputMethodService() {
                     } else correctionSuggestion=answer.corrected
                 } else if(prefs.correctionMode!=CorrectionMode.OFF && answer.corrected!=text && answer.corrected.length in 1..200)correctionSuggestion=answer.corrected
                 renderCandidates()
-            }.onFailure { keyboard.status("AI："+AiProtocol.failure(it).take(80)) }
+            }.onFailure { keyboard.aiStatus("AI："+AiProtocol.failure(it).take(80)) }
         }
     }
     private fun acceptCorrection(text: String) {

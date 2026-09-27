@@ -5,8 +5,8 @@ __include: luna_pinyin.schema:/
 
 schema:
   schema_id: luna_pinyin_simp
-  name: 朙月拼音·简化字
-  version: "0.22"
+  name: Loop 白霜全拼
+  version: "0.23-loop-frost"
   author:
     - 佛振 <chen.sst@gmail.com>
   description: |
@@ -25,6 +25,7 @@ switches:
     states: [ 。，, ．， ]
 
 translator:
+  dictionary: loop_frost
   prism: luna_pinyin_simp
 
 simplifier:

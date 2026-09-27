@@ -1,5 +1,15 @@
 # Loop 验证记录
 
+## 0.1.17-alpha.18 白霜词库与 AI 提示布局
+
+Windows / JDK 21 / SDK 37.0 / Build Tools 37.0.0：完整应用主机测试 206 项通过，0 失败、0 跳过；16 项 Python 词库与发布脚本测试通过；Lint、Release、Debug 和 Android 测试 APK 构建通过。Robolectric 的两项新测试覆盖九键与全键盘在 AI 超时、失败、无匹配时的高度、候选栏宽度、按键位置、候选点击、工具按钮、提示到期，以及不覆盖现有纠错撤销操作。
+
+WSL Ubuntu 22.04 / librime 1.7.3 原生 C API：使用与 APK 相同的原始词表及方案完成冷部署，21 组九键→全拼→九键候选查找和提交通过，包含你好、中国、输入法、人工智能、计算机、西安及整句你好世界。除西安外这些样例均为首候选；西安在本次九键样例为第 10 位、全拼为第 3 位。仅为有限功能样例，不代表总体准确率或手机延迟。工具仅解包到忽略的 `verification/frost-alpha18/`，不加入 APK。
+
+四张白霜词表与固定上游提交逐字节一致，合计 653,191 条字词/读音记录（不是去重后的词数）；摘要、大小和来源见 `third_party/rime-frost.json`。本版使用独立 `rime/frost-v1/` 缓存，不删除原 Rime 目录，不修改个人数据库/密钥；源码附 Android `FrostInstrumentation`，可验证真实应用目录保留和 18 组候选切换/提交。本轮没有可用 Android 17 模拟器或真机，因此该 Android 原生测试未执行，Linux 检查不冒充 APK 真机结果。
+
+首次打开中文键盘需要本机编译新词库，耗时依设备而异；本次没有引入完整白霜方案的 Lua、细胞词库或模型。更新包沿用原开发签名，CI 继续校验 v1/v2/v3 和全部发布资产。
+
 ## 0.1.16-alpha.17 签名兼容验证
 
 对从 GitHub 实际下载的 alpha.16 APK 核对 SHA-256：`bbd2f0ebf0cab33c99cd4149446f6b0310497aa96a156ff01a9053a71ba5fcc5`，与公开附件及清单一致。默认 `apksigner verify --verbose --print-certs` 验证成功，v2=true，v1/v3=false，签名证书仍是原开发证书。因此没有将反馈直接归因为漏签或文件损坏。
